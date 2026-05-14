@@ -1,0 +1,18 @@
+# Dev override: mounts local `app/` and runs uvicorn with --reload.
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# Or set COMPOSE_FILE in shell:
+#   export COMPOSE_FILE=docker-compose.yml:docker-compose.dev.yml
+
+services:
+  app:
+    volumes:
+      - ./app:/app/app
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      PYTHONDONTWRITEBYTECODE: "1"
+
+  db:
+    # Expose Postgres on the host so you can connect with psql/DBeaver during dev.
+    ports:
+      - "5433:5432"

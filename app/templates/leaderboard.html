@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<nav class="tabs">
+    <a href="/?period=week" class="{% if period == 'week' %}active{% endif %}">Týždeň</a>
+    <a href="/?period=month" class="{% if period == 'month' %}active{% endif %}">30 dní</a>
+    <a href="/?period=all" class="{% if period == 'all' %}active{% endif %}">All-time</a>
+</nav>
+
+{% if not rows %}
+    <p class="empty">Žiadne dáta. Spusti sync (footer) alebo skontroluj <code>GITHUB_TOKEN</code> / <code>GITHUB_ORG</code> v <code>.env</code>.</p>
+{% else %}
+<table class="leaderboard">
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Contributor</th>
+            <th class="num">+ riadky</th>
+            <th class="num">− riadky</th>
+            <th class="num">Commity</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr>
+            <td class="rank">{{ loop.index }}</td>
+            <td class="who">
+                {% if r.avatar_url %}<img src="{{ r.avatar_url }}" alt="" width="28" height="28">{% endif %}
+                {% if r.html_url %}<a href="{{ r.html_url }}" target="_blank" rel="noopener">{{ r.login }}</a>
+                {% else %}{{ r.login }}{% endif %}
+            </td>
+            <td class="num pos">+{{ "{:,}".format(r.additions) }}</td>
+            <td class="num neg">−{{ "{:,}".format(r.deletions) }}</td>
+            <td class="num">{{ "{:,}".format(r.commits) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}

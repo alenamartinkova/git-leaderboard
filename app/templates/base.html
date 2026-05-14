@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Git Leaderboard{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='style.css') }}">
+</head>
+<body>
+    <header>
+        <h1>🏆 Git Leaderboard</h1>
+        <p class="org">org: <code>{{ org }}</code></p>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+    <footer>
+        <form method="post" action="/sync" class="sync-form">
+            <button type="submit">↻ Sync now</button>
+        </form>
+        {% if last_sync %}
+            <p class="sync-info">last sync: {{ last_sync.started_at.strftime('%Y-%m-%d %H:%M UTC') }}
+               {% if last_sync.error %}<span class="err">(error: {{ last_sync.error }})</span>
+               {% elif last_sync.finished_at %}— {{ last_sync.repos_synced }} repos
+               {% else %}<span class="pending">— running…</span>{% endif %}
+            </p>
+        {% else %}
+            <p class="sync-info">no sync yet</p>
+        {% endif %}
+    </footer>
+</body>
+</html>

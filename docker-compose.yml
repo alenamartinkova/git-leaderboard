@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: leaderboard
+      POSTGRES_PASSWORD: leaderboard
+      POSTGRES_DB: leaderboard
+    # Postgres is only reached by the `app` service over the internal network.
+    # Uncomment to expose on the host (e.g. for psql/DBeaver). Pick a free port.
+    # ports:
+    #   - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leaderboard -d leaderboard"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      # Override host: inside the compose network Postgres is reachable as `db`.
+      DATABASE_URL: postgresql+psycopg://leaderboard:leaderboard@db:5432/leaderboard
+    ports:
+      - "8000:8000"
+
+volumes:
+  pgdata:
