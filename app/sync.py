@@ -1,3 +1,4 @@
+import fnmatch
 import logging
 from datetime import UTC, date, datetime
 
@@ -95,8 +96,13 @@ async def run_sync() -> SyncRun:
             repos = await gh.list_org_repos(settings.github_org)
             logger.info("found %d repos in %s", len(repos), settings.github_org)
 
+            patterns = settings.exclude_patterns
             for repo_data in repos:
                 if repo_data.get("archived"):
+                    continue
+                name = repo_data["name"]
+                if any(fnmatch.fnmatchcase(name, p) for p in patterns):
+                    logger.info("skipping %s (matches exclude pattern)", name)
                     continue
                 repo = _upsert_repo(db, repo_data)
                 db.commit()

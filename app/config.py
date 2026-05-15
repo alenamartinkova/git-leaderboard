@@ -9,6 +9,11 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://leaderboard:leaderboard@localhost:5432/leaderboard"
     sync_cron_hour: int = 3
     sync_cron_minute: int = 0
+    sync_exclude_patterns: str = "*-config,tf-org,tf-infra"
+
+    @property
+    def exclude_patterns(self) -> list[str]:
+        return [p.strip() for p in self.sync_exclude_patterns.split(",") if p.strip()]
 
 
 settings = Settings()
