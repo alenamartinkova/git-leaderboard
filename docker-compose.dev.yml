@@ -8,6 +8,7 @@ services:
   app:
     volumes:
       - ./app:/app/app
+      - ./scripts:/app/scripts
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
     environment:
       PYTHONDONTWRITEBYTECODE: "1"

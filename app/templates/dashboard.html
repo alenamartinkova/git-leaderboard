@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block content %}
+{% macro delta(curr, prev) -%}
+    {%- if prev == 0 and curr == 0 -%}
+        <span class="delta-flat">±0</span>
+    {%- elif prev == 0 -%}
+        <span class="delta-up">▲ new</span>
+    {%- else -%}
+        {%- set pct = ((curr - prev) / prev * 100) | round(0, 'common') | int -%}
+        {%- if pct > 0 -%}
+            <span class="delta-up">▲ {{ pct }}%</span>
+        {%- elif pct < 0 -%}
+            <span class="delta-down">▼ {{ pct | abs }}%</span>
+        {%- else -%}
+            <span class="delta-flat">±0%</span>
+        {%- endif -%}
+    {%- endif -%}
+{%- endmacro %}
+
+<div class="dashboard-header">
+    <h2>Dashboard</h2>
+    <form method="get" action="/dashboard" class="weeks-filter">
+        <label for="weeks">Obdobie:</label>
+        <select id="weeks" name="weeks" onchange="this.form.submit()">
+            <option value="8" {% if weeks == 8 %}selected{% endif %}>8 týždňov</option>
+            <option value="13" {% if weeks == 13 %}selected{% endif %}>13 týždňov</option>
+            <option value="26" {% if weeks == 26 %}selected{% endif %}>26 týždňov</option>
+            <option value="52" {% if weeks == 52 %}selected{% endif %}>52 týždňov</option>
+        </select>
+    </form>
+</div>
+
+<section class="summary-grid">
+    <div class="summary-card">
+        <div class="summary-label">Commity (30d)</div>
+        <div class="summary-value">{{ "{:,}".format(curr.commits) }}</div>
+        <div class="summary-delta">vs predošlých 30d: {{ delta(curr.commits, prev.commits) }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">+ riadky (30d)</div>
+        <div class="summary-value pos">+{{ "{:,}".format(curr.additions) }}</div>
+        <div class="summary-delta">vs predošlých 30d: {{ delta(curr.additions, prev.additions) }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">− riadky (30d)</div>
+        <div class="summary-value neg">−{{ "{:,}".format(curr.deletions) }}</div>
+        <div class="summary-delta">vs predošlých 30d: {{ delta(curr.deletions, prev.deletions) }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">Súbory (30d)</div>
+        <div class="summary-value">{{ "{:,}".format(curr.changed_files) }}</div>
+        <div class="summary-delta">vs predošlých 30d: {{ delta(curr.changed_files, prev.changed_files) }}</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">Aktívni contributori (30d)</div>
+        <div class="summary-value">{{ "{:,}".format(curr.contributors) }}</div>
+        <div class="summary-delta">vs predošlých 30d: {{ delta(curr.contributors, prev.contributors) }}</div>
+    </div>
+</section>
+
+{% if not chart_data.labels %}
+    <p class="empty">Žiadne dáta na zobrazenie. Spusti sync.</p>
+{% else %}
+<section class="chart-card">
+    <h3>Aktivita po týždňoch — commity</h3>
+    <canvas id="commitsChart" height="100"></canvas>
+</section>
+
+<section class="chart-card">
+    <h3>Aktivita po týždňoch — riadky</h3>
+    <canvas id="linesChart" height="100"></canvas>
+</section>
+
+<section class="chart-card">
+    <h3>Zmenené súbory po týždňoch</h3>
+    <canvas id="filesChart" height="100"></canvas>
+</section>
+
+<div class="charts-row">
+    <section class="chart-card">
+        <h3>Top contributori (30 dní)</h3>
+        {% if contributors_chart.labels %}
+            <canvas id="contributorsChart" height="220"></canvas>
+        {% else %}
+            <p class="empty-inline">Žiadne dáta</p>
+        {% endif %}
+    </section>
+    <section class="chart-card">
+        <h3>Top repá (30 dní)</h3>
+        {% if repos_chart.labels %}
+            <canvas id="reposChart" height="220"></canvas>
+        {% else %}
+            <p class="empty-inline">Žiadne dáta</p>
+        {% endif %}
+    </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+    const CHART_DATA = {{ chart_data | tojson }};
+    const CONTRIBUTORS = {{ contributors_chart | tojson }};
+    const REPOS = {{ repos_chart | tojson }};
+
+    const TEXT = '#e6edf3';
+    const MUTED = '#8b949e';
+    const GRID = 'rgba(138,148,158,0.12)';
+    const ACCENT = '#6ea8ff';
+    const ACCENT2 = '#a371f7';
+    const POS = '#3fb950';
+    const NEG = '#f85149';
+
+    Chart.defaults.color = MUTED;
+    Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif';
+    Chart.defaults.borderColor = GRID;
+
+    const gridScale = {
+        grid: { color: GRID, drawBorder: false },
+        ticks: { color: MUTED, font: { size: 11 } },
+    };
+    const baseOpts = {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+            legend: { labels: { color: TEXT, usePointStyle: true, padding: 14 } },
+            tooltip: {
+                backgroundColor: '#161b22',
+                borderColor: '#2a3140',
+                borderWidth: 1,
+                titleColor: TEXT,
+                bodyColor: TEXT,
+                padding: 10,
+                callbacks: {
+                    label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
+                },
+            },
+        },
+        scales: { x: gridScale, y: { ...gridScale, beginAtZero: true } },
+    };
+
+    new Chart(document.getElementById('commitsChart'), {
+        type: 'line',
+        data: {
+            labels: CHART_DATA.labels,
+            datasets: [{
+                label: 'Commity',
+                data: CHART_DATA.commits,
+                borderColor: ACCENT,
+                backgroundColor: 'rgba(110,168,255,0.18)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                borderWidth: 2,
+            }],
+        },
+        options: baseOpts,
+    });
+
+    new Chart(document.getElementById('linesChart'), {
+        type: 'line',
+        data: {
+            labels: CHART_DATA.labels,
+            datasets: [
+                {
+                    label: '+ riadky',
+                    data: CHART_DATA.additions,
+                    borderColor: POS,
+                    backgroundColor: 'rgba(63,185,80,0.12)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 2,
+                    pointHoverRadius: 5,
+                    borderWidth: 2,
+                },
+                {
+                    label: '− riadky',
+                    data: CHART_DATA.deletions,
+                    borderColor: NEG,
+                    backgroundColor: 'rgba(248,81,73,0.10)',
+                    fill: true,
+                    tension: 0.3,
+                    pointRadius: 2,
+                    pointHoverRadius: 5,
+                    borderWidth: 2,
+                },
+            ],
+        },
+        options: baseOpts,
+    });
+
+    new Chart(document.getElementById('filesChart'), {
+        type: 'line',
+        data: {
+            labels: CHART_DATA.labels,
+            datasets: [{
+                label: 'Zmenené súbory',
+                data: CHART_DATA.changed_files,
+                borderColor: ACCENT2,
+                backgroundColor: 'rgba(163,113,247,0.15)',
+                fill: true,
+                tension: 0.3,
+                pointRadius: 2,
+                pointHoverRadius: 5,
+                borderWidth: 2,
+            }],
+        },
+        options: baseOpts,
+    });
+
+    if (CONTRIBUTORS.labels.length) {
+        new Chart(document.getElementById('contributorsChart'), {
+            type: 'bar',
+            data: {
+                labels: CONTRIBUTORS.labels,
+                datasets: [{
+                    label: 'Commity',
+                    data: CONTRIBUTORS.commits,
+                    backgroundColor: 'rgba(110,168,255,0.55)',
+                    borderColor: ACCENT,
+                    borderWidth: 1,
+                    borderRadius: 6,
+                }],
+            },
+            options: {
+                ...baseOpts,
+                indexAxis: 'y',
+                plugins: { ...baseOpts.plugins, legend: { display: false } },
+            },
+        });
+    }
+
+    if (REPOS.labels.length) {
+        new Chart(document.getElementById('reposChart'), {
+            type: 'bar',
+            data: {
+                labels: REPOS.labels,
+                datasets: [{
+                    label: 'Commity',
+                    data: REPOS.commits,
+                    backgroundColor: 'rgba(163,113,247,0.55)',
+                    borderColor: ACCENT2,
+                    borderWidth: 1,
+                    borderRadius: 6,
+                }],
+            },
+            options: {
+                ...baseOpts,
+                indexAxis: 'y',
+                plugins: { ...baseOpts.plugins, legend: { display: false } },
+            },
+        });
+    }
+</script>
+{% endif %}
+{% endblock %}

@@ -1,13 +1,33 @@
 {% extends "base.html" %}
 {% block content %}
-<nav class="tabs">
-    <a href="/?period=week" class="{% if period == 'week' %}active{% endif %}">Týždeň</a>
-    <a href="/?period=month" class="{% if period == 'month' %}active{% endif %}">30 dní</a>
-    <a href="/?period=all" class="{% if period == 'all' %}active{% endif %}">All-time</a>
-</nav>
+{% set repo_qs = ('&repo=' ~ selected_repo) if selected_repo else '' %}
+<div class="filters">
+    <nav class="tabs">
+        <a href="/?period=week{{ repo_qs }}" class="{% if period == 'week' %}active{% endif %}">Týždeň</a>
+        <a href="/?period=month{{ repo_qs }}" class="{% if period == 'month' %}active{% endif %}">30 dní</a>
+        <a href="/?period=all{{ repo_qs }}" class="{% if period == 'all' %}active{% endif %}">All-time</a>
+    </nav>
+
+    <form method="get" action="/" class="repo-filter">
+        <input type="hidden" name="period" value="{{ period }}">
+        <select name="repo" onchange="this.form.submit()">
+            <option value="">Všetky repá</option>
+            {% for r in repos %}
+            <option value="{{ r.full_name }}" {% if r.full_name == selected_repo %}selected{% endif %}>{{ r.full_name }}</option>
+            {% endfor %}
+        </select>
+        {% if selected_repo %}<a href="/?period={{ period }}" class="clear-filter" title="Zrušiť filter">✕</a>{% endif %}
+    </form>
+</div>
 
 {% if not rows %}
-    <p class="empty">Žiadne dáta. Spusti sync (footer) alebo skontroluj <code>GITHUB_TOKEN</code> / <code>GITHUB_ORG</code> v <code>.env</code>.</p>
+    <p class="empty">
+        {% if selected_repo %}
+            Žiadne dáta pre <code>{{ selected_repo }}</code> v tomto období.
+        {% else %}
+            Žiadne dáta. Spusti sync (footer) alebo skontroluj <code>GITHUB_TOKEN</code> / <code>GITHUB_ORG</code> v <code>.env</code>.
+        {% endif %}
+    </p>
 {% else %}
 <table class="leaderboard">
     <thead>
@@ -17,6 +37,7 @@
             <th class="num">+ riadky</th>
             <th class="num">− riadky</th>
             <th class="num">Commity</th>
+            <th class="num">Súbory</th>
         </tr>
     </thead>
     <tbody>
@@ -31,6 +52,7 @@
             <td class="num pos">+{{ "{:,}".format(r.additions) }}</td>
             <td class="num neg">−{{ "{:,}".format(r.deletions) }}</td>
             <td class="num">{{ "{:,}".format(r.commits) }}</td>
+            <td class="num">{{ "{:,}".format(r.changed_files) }}</td>
         </tr>
         {% endfor %}
     </tbody>

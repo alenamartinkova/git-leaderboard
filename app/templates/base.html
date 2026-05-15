@@ -8,25 +8,74 @@
 </head>
 <body>
     <header>
-        <h1>🏆 Git Leaderboard</h1>
-        <p class="org">org: <code>{{ org }}</code></p>
+        <div class="header-inner">
+            <div>
+                <h1>🏆 Git Leaderboard</h1>
+                <p class="org">org: <code>{{ org }}</code></p>
+            </div>
+            <nav class="topnav">
+                {% set path = request.url.path %}
+                <a href="/" class="{% if path == '/' %}active{% endif %}">Leaderboard</a>
+                <a href="/dashboard" class="{% if path.startswith('/dashboard') %}active{% endif %}">Dashboard</a>
+                <a href="/repos" class="{% if path.startswith('/repos') %}active{% endif %}">Repos</a>
+            </nav>
+        </div>
     </header>
     <main>
         {% block content %}{% endblock %}
     </main>
-    <footer>
-        <form method="post" action="/sync" class="sync-form">
-            <button type="submit">↻ Sync now</button>
-        </form>
-        {% if last_sync %}
-            <p class="sync-info">last sync: {{ last_sync.started_at.strftime('%Y-%m-%d %H:%M UTC') }}
-               {% if last_sync.error %}<span class="err">(error: {{ last_sync.error }})</span>
-               {% elif last_sync.finished_at %}— {{ last_sync.repos_synced }} repos
-               {% else %}<span class="pending">— running…</span>{% endif %}
-            </p>
-        {% else %}
-            <p class="sync-info">no sync yet</p>
-        {% endif %}
+    <footer id="sync-footer" data-syncing="{{ '1' if syncing else '0' }}">
+        {% include "_sync_footer.html" %}
     </footer>
+    <script>
+        (function () {
+            const footer = document.getElementById('sync-footer');
+            if (!footer) return;
+            let timer = null;
+
+            async function tick() {
+                try {
+                    const res = await fetch('/sync/status', { headers: { 'Accept': 'text/html' } });
+                    if (!res.ok) return;
+                    const syncing = res.headers.get('X-Syncing') === '1';
+                    const html = await res.text();
+                    footer.innerHTML = html;
+                    const wasSyncing = footer.dataset.syncing === '1';
+                    footer.dataset.syncing = syncing ? '1' : '0';
+                    if (!syncing) {
+                        stop();
+                        if (wasSyncing) {
+                            // sync just finished — refresh data on the page
+                            window.location.reload();
+                        }
+                    }
+                } catch (_) { /* ignore */ }
+            }
+
+            function start() {
+                if (timer) return;
+                timer = setInterval(tick, 3000);
+            }
+            function stop() {
+                if (timer) { clearInterval(timer); timer = null; }
+            }
+
+            if (footer.dataset.syncing === '1') start();
+
+            // also poll lightly when not syncing so we pick up a sync started elsewhere
+            const idle = setInterval(async () => {
+                if (footer.dataset.syncing === '1') return;
+                try {
+                    const res = await fetch('/sync/status', { headers: { 'Accept': 'text/html' } });
+                    if (!res.ok) return;
+                    if (res.headers.get('X-Syncing') === '1') {
+                        footer.innerHTML = await res.text();
+                        footer.dataset.syncing = '1';
+                        start();
+                    }
+                } catch (_) { /* ignore */ }
+            }, 15000);
+        })();
+    </script>
 </body>
 </html>

@@ -30,6 +30,18 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
 
+    # Tiny inline migration so existing DBs gain the progress columns without Alembic.
+    from sqlalchemy import text
+
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS total_repos INTEGER DEFAULT 0"))
+        conn.execute(text("ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS current_index INTEGER DEFAULT 0"))
+        conn.execute(text("ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS current_repo VARCHAR(512)"))
+        conn.execute(text("ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS scope VARCHAR(16) DEFAULT 'org'"))
+        conn.execute(text("ALTER TABLE weekly_stats ADD COLUMN IF NOT EXISTS changed_files INTEGER NOT NULL DEFAULT 0"))
+        conn.execute(text("ALTER TABLE weekly_stats DROP COLUMN IF EXISTS branches_created"))
+        conn.execute(text("ALTER TABLE repos ADD COLUMN IF NOT EXISTS branch_count INTEGER NOT NULL DEFAULT 0"))
+
     # Any sync run still marked as in-progress at startup was killed by a restart —
     # mark it so the UI doesn't show "running…" forever.
     with SessionLocal() as db:

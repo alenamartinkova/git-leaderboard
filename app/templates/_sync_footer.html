@@ -1,0 +1,17 @@
+<form method="post" action="/sync" class="sync-form">
+    <button type="submit" {% if syncing %}disabled{% endif %}>↻ Sync all</button>
+</form>
+{% if last_sync %}
+    <p class="sync-info">last sync: {{ last_sync.started_at.strftime('%Y-%m-%d %H:%M UTC') }}
+       {% if last_sync.error %}<span class="err">(error: {{ last_sync.error }})</span>
+       {% elif last_sync.finished_at %}— {{ last_sync.repos_synced }} repos
+       {% else %}
+         <span class="pending">— running
+           {% if last_sync.total_repos %}{{ last_sync.current_index }}/{{ last_sync.total_repos }}{% endif %}
+           {% if last_sync.current_repo %}— {{ last_sync.current_repo }}{% endif %}…
+         </span>
+       {% endif %}
+    </p>
+{% else %}
+    <p class="sync-info">no sync yet</p>
+{% endif %}

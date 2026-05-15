@@ -28,6 +28,7 @@ class Repo(Base):
     private: Mapped[bool] = mapped_column(Boolean, default=False)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     fork: Mapped[bool] = mapped_column(Boolean, default=False)
+    branch_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     stats: Mapped[list["WeeklyStat"]] = relationship(back_populates="repo")
@@ -48,6 +49,7 @@ class WeeklyStat(Base):
     additions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     deletions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     commits: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    changed_files: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     contributor: Mapped[Contributor] = relationship(back_populates="stats")
     repo: Mapped[Repo] = relationship(back_populates="stats")
@@ -60,4 +62,8 @@ class SyncRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     repos_synced: Mapped[int] = mapped_column(Integer, default=0)
+    total_repos: Mapped[int] = mapped_column(Integer, default=0)
+    current_index: Mapped[int] = mapped_column(Integer, default=0)
+    current_repo: Mapped[str | None] = mapped_column(String(512))
+    scope: Mapped[str] = mapped_column(String(16), default="org")  # "org" or "repo"
     error: Mapped[str | None] = mapped_column(String(2048))

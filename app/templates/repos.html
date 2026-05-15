@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Repos</h2>
+
+<form method="get" action="/repos" class="repo-search-form" role="search">
+    <input type="search" name="q" value="{{ q }}" placeholder="🔍 Hľadať repo (owner/name)…" autocomplete="off">
+    <input type="hidden" name="per_page" value="{{ per_page }}">
+    <button type="submit">Hľadať</button>
+    {% if q %}<a class="clear-btn" href="/repos?per_page={{ per_page }}">Vyčistiť</a>{% endif %}
+</form>
+
+{% set qs = '&q=' ~ (q | urlencode) if q else '' %}
+
+{% if not repos %}
+    {% if q %}
+        <p class="empty">Žiadne repá nezodpovedajú <code>{{ q }}</code>.</p>
+    {% else %}
+        <p class="empty">Žiadne repá zatiaľ. Spusti full sync, alebo zadaj <code>owner/repo</code> vyššie.</p>
+    {% endif %}
+{% else %}
+<table class="leaderboard">
+    <thead>
+        <tr>
+            <th>Repo</th>
+            <th class="num">Branche</th>
+            <th>Last synced</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in repos %}
+        <tr>
+            <td>{{ r.full_name }}{% if r.archived %} <span class="muted">(archived)</span>{% endif %}{% if r.fork %} <span class="muted">(fork)</span>{% endif %}</td>
+            <td class="num">{{ "{:,}".format(r.branch_count) }}</td>
+            <td>{% if r.last_synced_at %}{{ r.last_synced_at.strftime('%Y-%m-%d %H:%M UTC') }}{% else %}—{% endif %}</td>
+            <td>
+                <form method="post" action="/sync/repo" class="inline-form">
+                    <input type="hidden" name="full_name" value="{{ r.full_name }}">
+                    <button type="submit" {% if syncing %}disabled{% endif %}>↻ Sync</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% if total_pages > 1 %}
+<nav class="pagination" aria-label="Pagination">
+    <a class="page-btn {% if page <= 1 %}disabled{% endif %}"
+       href="{% if page > 1 %}/repos?page={{ page - 1 }}&per_page={{ per_page }}{{ qs }}{% else %}#{% endif %}"
+       {% if page <= 1 %}aria-disabled="true"{% endif %}>← Prev</a>
+
+    {% set window = 2 %}
+    {% set start = [1, page - window] | max %}
+    {% set end = [total_pages, page + window] | min %}
+
+    {% if start > 1 %}
+        <a class="page-btn" href="/repos?page=1&per_page={{ per_page }}{{ qs }}">1</a>
+        {% if start > 2 %}<span class="page-ellipsis">…</span>{% endif %}
+    {% endif %}
+
+    {% for p in range(start, end + 1) %}
+        <a class="page-btn {% if p == page %}active{% endif %}"
+           href="/repos?page={{ p }}&per_page={{ per_page }}{{ qs }}">{{ p }}</a>
+    {% endfor %}
+
+    {% if end < total_pages %}
+        {% if end < total_pages - 1 %}<span class="page-ellipsis">…</span>{% endif %}
+        <a class="page-btn" href="/repos?page={{ total_pages }}&per_page={{ per_page }}{{ qs }}">{{ total_pages }}</a>
+    {% endif %}
+
+    <a class="page-btn {% if page >= total_pages %}disabled{% endif %}"
+       href="{% if page < total_pages %}/repos?page={{ page + 1 }}&per_page={{ per_page }}{{ qs }}{% else %}#{% endif %}"
+       {% if page >= total_pages %}aria-disabled="true"{% endif %}>Next →</a>
+</nav>
+{% endif %}
+<p class="pagination-info">Strana {{ page }} z {{ total_pages }} · {{ total }} {% if total == 1 %}repo{% elif 2 <= total <= 4 %}repá{% else %}rep{% endif %}{% if q %} pre „{{ q }}"{% endif %}</p>
+
+{% endif %}
+{% endblock %}
