@@ -1,3 +1,4 @@
+import asyncio
 import fnmatch
 import logging
 from datetime import UTC, date, datetime
@@ -97,6 +98,7 @@ async def run_sync() -> SyncRun:
             logger.info("found %d repos in %s", len(repos), settings.github_org)
 
             patterns = settings.exclude_patterns
+            targets: list[dict] = []
             for repo_data in repos:
                 if repo_data.get("archived"):
                     continue
@@ -104,6 +106,22 @@ async def run_sync() -> SyncRun:
                 if any(fnmatch.fnmatchcase(name, p) for p in patterns):
                     logger.info("skipping %s (matches exclude pattern)", name)
                     continue
+                targets.append(repo_data)
+
+            # Pass 1: prime GitHub's stats cache for every repo so it computes them
+            # in parallel on the server side. First-ever sync otherwise hits 202s
+            # that don't resolve within our per-repo retry budget.
+            not_ready = 0
+            for repo_data in targets:
+                ready = await gh.prime_contributor_stats(repo_data["owner"]["login"], repo_data["name"])
+                if not ready:
+                    not_ready += 1
+            if not_ready:
+                logger.info("priming %d repos, waiting 30s for GitHub to compute stats", not_ready)
+                await asyncio.sleep(30)
+
+            # Pass 2: actually fetch the stats.
+            for repo_data in targets:
                 repo = _upsert_repo(db, repo_data)
                 db.commit()
 

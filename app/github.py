@@ -49,8 +49,19 @@ class GitHubClient:
             page += 1
         return repos
 
+    async def prime_contributor_stats(self, owner: str, repo: str) -> bool:
+        """Trigger stats computation without waiting. Returns True if data is already
+        cached and ready (200), False if GitHub started computing in the background (202)."""
+        r = await self._client.get(f"/repos/{owner}/{repo}/stats/contributors")
+        if r.status_code in (200, 204):
+            return True
+        if r.status_code == 202:
+            return False
+        r.raise_for_status()
+        return False
+
     async def contributor_stats(
-        self, owner: str, repo: str, *, max_retries: int = 6, retry_delay: float = 3.0
+        self, owner: str, repo: str, *, max_retries: int = 10, retry_delay: float = 3.0
     ) -> list[dict[str, Any]] | None:
         """GET /repos/{owner}/{repo}/stats/contributors.
 
