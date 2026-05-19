@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from urllib.parse import urlencode
+
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -172,11 +174,20 @@ async def trigger_sync(background: BackgroundTasks):
 
 
 @app.post("/sync/repo")
-async def trigger_sync_repo(background: BackgroundTasks, full_name: str = Form(...)):
+async def trigger_sync_repo(
+    background: BackgroundTasks,
+    full_name: str = Form(...),
+    page: int = Form(1),
+    per_page: int = Form(10),
+    q: str = Form(""),
+):
     """Manual trigger — sync a single repo by 'owner/repo'."""
     full_name = full_name.strip()
     background.add_task(_safe_run_sync_repo, full_name)
-    return RedirectResponse(url="/repos", status_code=303)
+    params = {"page": page, "per_page": per_page}
+    if q:
+        params["q"] = q
+    return RedirectResponse(url=f"/repos?{urlencode(params)}", status_code=303)
 
 
 async def _safe_run_sync():

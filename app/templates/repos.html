@@ -36,6 +36,9 @@
             <td>
                 <form method="post" action="/sync/repo" class="inline-form">
                     <input type="hidden" name="full_name" value="{{ r.full_name }}">
+                    <input type="hidden" name="page" value="{{ page }}">
+                    <input type="hidden" name="per_page" value="{{ per_page }}">
+                    <input type="hidden" name="q" value="{{ q }}">
                     <button type="submit" {% if syncing %}disabled{% endif %}>↻ Sync</button>
                 </form>
             </td>
