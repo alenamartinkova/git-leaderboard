@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     sync_cron_hour: int = 3
     sync_cron_minute: int = 0
     sync_exclude_patterns: str = "*-config,tf-org,tf-infra"
+    sync_history_days: int = 365
 
     @property
     def exclude_patterns(self) -> list[str]:

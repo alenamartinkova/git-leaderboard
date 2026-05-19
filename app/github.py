@@ -4,22 +4,36 @@ from typing import Any
 
 import httpx
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
 
-# Pull all the fields we need from each commit in one paginated GraphQL query.
-# Skips merge commits because their additions/deletions double-count branch
-# contents and the REST /stats endpoint we replaced ignored them too.
-_COMMIT_HISTORY_QUERY = """
+_BRANCHES_QUERY = """
 query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
-    defaultBranchRef {
+    refs(refPrefix: "refs/heads/", first: 100, after: $cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { name }
+    }
+  }
+}
+"""
+
+# Pull commit history for a single branch, filtered to the recent window.
+# Skips merge commits in code because their additions/deletions double-count branch
+# contents and the REST /stats endpoint we replaced ignored them too.
+_BRANCH_HISTORY_QUERY = """
+query($owner: String!, $name: String!, $branch: String!, $since: GitTimestamp!, $cursor: String) {
+  repository(owner: $owner, name: $name) {
+    ref(qualifiedName: $branch) {
       target {
         ... on Commit {
-          history(first: 100, after: $cursor) {
+          history(first: 100, after: $cursor, since: $since) {
             pageInfo { hasNextPage endCursor }
             nodes {
+              oid
               committedDate
               additions
               deletions
@@ -124,61 +138,103 @@ class GitHubClient:
             raise RuntimeError(f"GraphQL errors: {payload['errors']}")
         return payload["data"]
 
+    async def _list_branch_names(self, owner: str, repo: str) -> list[str]:
+        names: list[str] = []
+        cursor: str | None = None
+        while True:
+            data = await self._graphql(_BRANCHES_QUERY, {"owner": owner, "name": repo, "cursor": cursor})
+            refs = (data.get("repository") or {}).get("refs")
+            if not refs:
+                return names
+            for node in refs["nodes"]:
+                names.append(node["name"])
+            if not refs["pageInfo"]["hasNextPage"]:
+                break
+            cursor = refs["pageInfo"]["endCursor"]
+        return names
+
     async def contributor_stats(self, owner: str, repo: str) -> list[dict[str, Any]] | None:
         """Aggregate per-contributor weekly stats via GraphQL commit history.
 
+        Walks every branch and dedupes by commit OID so feature-branch work counts
+        even before it's merged, without double-counting after merge. History is
+        limited to the last ``sync_history_days`` to keep GraphQL calls bounded.
+
         Returns the same shape the old REST /stats/contributors endpoint did:
             [{"author": {id, login, avatar_url, html_url}, "weeks": [{"w": ts, "a", "d", "c", "f"}]}]
-        so the caller doesn't need to know we switched APIs. Returns None if the
-        repo is empty / has no default branch.
+        Returns None if the repo is empty / has no branches.
         """
+        branches = await self._list_branch_names(owner, repo)
+        if not branches:
+            return None
+
+        since_dt = datetime.now(UTC) - timedelta(days=settings.sync_history_days)
+        since_iso = since_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
         # author_id -> {"author": {...}, "weeks": {ts -> [a, d, c, f]}}
         acc: dict[int, dict[str, Any]] = {}
-        cursor: str | None = None
+        seen_oids: set[str] = set()
         page_count = 0
 
-        while True:
-            data = await self._graphql(_COMMIT_HISTORY_QUERY, {"owner": owner, "name": repo, "cursor": cursor})
-            ref = (data.get("repository") or {}).get("defaultBranchRef")
-            if not ref or not ref.get("target"):
-                return None
-
-            history = ref["target"]["history"]
-            for node in history["nodes"]:
-                # Skip merge commits — their additions/deletions are noisy.
-                if (node.get("parents") or {}).get("totalCount", 0) > 1:
-                    continue
-                user = (node.get("author") or {}).get("user")
-                if not user:  # ghost author (email not linked to a GitHub account)
-                    continue
-
-                committed = datetime.fromisoformat(node["committedDate"].replace("Z", "+00:00"))
-                ts = _week_start_ts(committed)
-
-                entry = acc.setdefault(
-                    user["databaseId"],
-                    {
-                        "author": {
-                            "id": user["databaseId"],
-                            "login": user["login"],
-                            "avatar_url": user.get("avatarUrl"),
-                            "html_url": user.get("url"),
-                        },
-                        "weeks": {},
-                    },
+        for branch in branches:
+            qualified = f"refs/heads/{branch}"
+            cursor: str | None = None
+            while True:
+                data = await self._graphql(
+                    _BRANCH_HISTORY_QUERY,
+                    {"owner": owner, "name": repo, "branch": qualified, "since": since_iso, "cursor": cursor},
                 )
-                bucket = entry["weeks"].setdefault(ts, [0, 0, 0, 0])
-                bucket[0] += node.get("additions", 0) or 0
-                bucket[1] += node.get("deletions", 0) or 0
-                bucket[2] += 1
-                bucket[3] += node.get("changedFilesIfAvailable", 0) or 0
+                ref = (data.get("repository") or {}).get("ref")
+                if not ref or not ref.get("target"):
+                    break
 
-            page_count += 1
-            if not history["pageInfo"]["hasNextPage"]:
-                break
-            cursor = history["pageInfo"]["endCursor"]
+                history = ref["target"]["history"]
+                for node in history["nodes"]:
+                    oid = node["oid"]
+                    if oid in seen_oids:
+                        continue
+                    seen_oids.add(oid)
 
-        logger.info("graphql: %s/%s aggregated %d contributors across %d pages", owner, repo, len(acc), page_count)
+                    # Skip merge commits — their additions/deletions are noisy.
+                    if (node.get("parents") or {}).get("totalCount", 0) > 1:
+                        continue
+                    user = (node.get("author") or {}).get("user")
+                    if not user:  # ghost author (email not linked to a GitHub account)
+                        continue
+
+                    committed = datetime.fromisoformat(node["committedDate"].replace("Z", "+00:00"))
+                    ts = _week_start_ts(committed)
+
+                    entry = acc.setdefault(
+                        user["databaseId"],
+                        {
+                            "author": {
+                                "id": user["databaseId"],
+                                "login": user["login"],
+                                "avatar_url": user.get("avatarUrl"),
+                                "html_url": user.get("url"),
+                            },
+                            "weeks": {},
+                        },
+                    )
+                    bucket = entry["weeks"].setdefault(ts, [0, 0, 0, 0])
+                    bucket[0] += node.get("additions", 0) or 0
+                    bucket[1] += node.get("deletions", 0) or 0
+                    bucket[2] += 1
+                    bucket[3] += node.get("changedFilesIfAvailable", 0) or 0
+
+                page_count += 1
+                if not history["pageInfo"]["hasNextPage"]:
+                    break
+                cursor = history["pageInfo"]["endCursor"]
+
+        logger.info(
+            "graphql: %s/%s aggregated %d contributors from %d branches across %d pages (%d unique commits)",
+            owner, repo, len(acc), len(branches), page_count, len(seen_oids),
+        )
+
+        if not acc:
+            return None
 
         return [
             {
