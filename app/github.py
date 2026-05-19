@@ -13,6 +13,7 @@ GITHUB_API = "https://api.github.com"
 _BRANCHES_QUERY = """
 query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
+    defaultBranchRef { name }
     refs(refPrefix: "refs/heads/", first: 100, after: $cursor) {
       pageInfo { hasNextPage endCursor }
       nodes { name }
@@ -138,20 +139,25 @@ class GitHubClient:
             raise RuntimeError(f"GraphQL errors: {payload['errors']}")
         return payload["data"]
 
-    async def _list_branch_names(self, owner: str, repo: str) -> list[str]:
+    async def _list_branch_names(self, owner: str, repo: str) -> tuple[list[str], str | None]:
+        """Returns (all branch names, default branch name or None)."""
         names: list[str] = []
+        default: str | None = None
         cursor: str | None = None
         while True:
             data = await self._graphql(_BRANCHES_QUERY, {"owner": owner, "name": repo, "cursor": cursor})
-            refs = (data.get("repository") or {}).get("refs")
+            repo_data = data.get("repository") or {}
+            if default is None:
+                default = (repo_data.get("defaultBranchRef") or {}).get("name")
+            refs = repo_data.get("refs")
             if not refs:
-                return names
+                return names, default
             for node in refs["nodes"]:
                 names.append(node["name"])
             if not refs["pageInfo"]["hasNextPage"]:
                 break
             cursor = refs["pageInfo"]["endCursor"]
-        return names
+        return names, default
 
     async def contributor_stats(self, owner: str, repo: str) -> list[dict[str, Any]] | None:
         """Aggregate per-contributor weekly stats via GraphQL commit history.
@@ -164,9 +170,16 @@ class GitHubClient:
             [{"author": {id, login, avatar_url, html_url}, "weeks": [{"w": ts, "a", "d", "c", "f"}]}]
         Returns None if the repo is empty / has no branches.
         """
-        branches = await self._list_branch_names(owner, repo)
+        branches, default = await self._list_branch_names(owner, repo)
         if not branches:
             return None
+
+        # Walk default branch first so other branches can short-circuit pagination
+        # as soon as they hit ancestry already covered by main.
+        if default and default in branches:
+            ordered = [default] + [b for b in branches if b != default]
+        else:
+            ordered = branches
 
         since_dt = datetime.now(UTC) - timedelta(days=settings.sync_history_days)
         since_iso = since_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -176,7 +189,7 @@ class GitHubClient:
         seen_oids: set[str] = set()
         page_count = 0
 
-        for branch in branches:
+        for branch in ordered:
             qualified = f"refs/heads/{branch}"
             cursor: str | None = None
             while True:
@@ -189,11 +202,14 @@ class GitHubClient:
                     break
 
                 history = ref["target"]["history"]
+                page_count += 1
+                new_in_page = 0
                 for node in history["nodes"]:
                     oid = node["oid"]
                     if oid in seen_oids:
                         continue
                     seen_oids.add(oid)
+                    new_in_page += 1
 
                     # Skip merge commits — their additions/deletions are noisy.
                     if (node.get("parents") or {}).get("totalCount", 0) > 1:
@@ -223,14 +239,18 @@ class GitHubClient:
                     bucket[2] += 1
                     bucket[3] += node.get("changedFilesIfAvailable", 0) or 0
 
-                page_count += 1
+                # If the whole page was already-seen commits, we've walked into
+                # ancestry that another branch already covered — the rest are
+                # all ancestors too, so we can stop paginating this branch.
+                if history["nodes"] and new_in_page == 0:
+                    break
                 if not history["pageInfo"]["hasNextPage"]:
                     break
                 cursor = history["pageInfo"]["endCursor"]
 
         logger.info(
             "graphql: %s/%s aggregated %d contributors from %d branches across %d pages (%d unique commits)",
-            owner, repo, len(acc), len(branches), page_count, len(seen_oids),
+            owner, repo, len(acc), len(ordered), page_count, len(seen_oids),
         )
 
         if not acc:
