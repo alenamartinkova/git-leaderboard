@@ -16,7 +16,15 @@ query($owner: String!, $name: String!, $cursor: String) {
     defaultBranchRef { name }
     refs(refPrefix: "refs/heads/", first: 100, after: $cursor) {
       pageInfo { hasNextPage endCursor }
-      nodes { name }
+      nodes {
+        name
+        target {
+          ... on Commit {
+            oid
+            committedDate
+          }
+        }
+      }
     }
   }
 }
@@ -139,9 +147,9 @@ class GitHubClient:
             raise RuntimeError(f"GraphQL errors: {payload['errors']}")
         return payload["data"]
 
-    async def _list_branch_names(self, owner: str, repo: str) -> tuple[list[str], str | None]:
-        """Returns (all branch names, default branch name or None)."""
-        names: list[str] = []
+    async def _list_branches(self, owner: str, repo: str) -> tuple[list[dict[str, Any]], str | None]:
+        """Returns ([{name, tip_oid, tip_date}], default branch name or None)."""
+        branches: list[dict[str, Any]] = []
         default: str | None = None
         cursor: str | None = None
         while True:
@@ -151,13 +159,18 @@ class GitHubClient:
                 default = (repo_data.get("defaultBranchRef") or {}).get("name")
             refs = repo_data.get("refs")
             if not refs:
-                return names, default
+                return branches, default
             for node in refs["nodes"]:
-                names.append(node["name"])
+                target = node.get("target") or {}
+                branches.append({
+                    "name": node["name"],
+                    "tip_oid": target.get("oid"),
+                    "tip_date": target.get("committedDate"),
+                })
             if not refs["pageInfo"]["hasNextPage"]:
                 break
             cursor = refs["pageInfo"]["endCursor"]
-        return names, default
+        return branches, default
 
     async def contributor_stats(self, owner: str, repo: str) -> list[dict[str, Any]] | None:
         """Aggregate per-contributor weekly stats via GraphQL commit history.
@@ -170,26 +183,46 @@ class GitHubClient:
             [{"author": {id, login, avatar_url, html_url}, "weeks": [{"w": ts, "a", "d", "c", "f"}]}]
         Returns None if the repo is empty / has no branches.
         """
-        branches, default = await self._list_branch_names(owner, repo)
+        branches, default = await self._list_branches(owner, repo)
         if not branches:
             return None
 
-        # Walk default branch first so other branches can short-circuit pagination
-        # as soon as they hit ancestry already covered by main.
-        if default and default in branches:
-            ordered = [default] + [b for b in branches if b != default]
-        else:
-            ordered = branches
-
         since_dt = datetime.now(UTC) - timedelta(days=settings.sync_history_days)
         since_iso = since_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # Drop branches whose tip is older than the window — they can't contribute
+        # any new commits.
+        active: list[dict[str, Any]] = []
+        for b in branches:
+            tip_date = b.get("tip_date")
+            if tip_date:
+                try:
+                    if datetime.fromisoformat(tip_date.replace("Z", "+00:00")) < since_dt:
+                        continue
+                except ValueError:
+                    pass
+            active.append(b)
+
+        # Walk default branch first so other branches can short-circuit pagination
+        # (and tip-OID skip) as soon as they hit ancestry already covered by main.
+        if default:
+            active.sort(key=lambda b: 0 if b["name"] == default else 1)
+
+        skipped_stale = len(branches) - len(active)
 
         # author_id -> {"author": {...}, "weeks": {ts -> [a, d, c, f]}}
         acc: dict[int, dict[str, Any]] = {}
         seen_oids: set[str] = set()
         page_count = 0
+        skipped_merged = 0
 
-        for branch in ordered:
+        for b in active:
+            branch = b["name"]
+            tip_oid = b.get("tip_oid")
+            # Tip already covered by an earlier branch (typically main) -> fully merged.
+            if tip_oid and tip_oid in seen_oids:
+                skipped_merged += 1
+                continue
             qualified = f"refs/heads/{branch}"
             cursor: str | None = None
             while True:
@@ -249,8 +282,10 @@ class GitHubClient:
                 cursor = history["pageInfo"]["endCursor"]
 
         logger.info(
-            "graphql: %s/%s aggregated %d contributors from %d branches across %d pages (%d unique commits)",
-            owner, repo, len(acc), len(ordered), page_count, len(seen_oids),
+            "graphql: %s/%s aggregated %d contributors from %d/%d branches across %d pages "
+            "(%d unique commits, skipped %d stale, %d merged)",
+            owner, repo, len(acc), len(active) - skipped_merged, len(branches),
+            page_count, len(seen_oids), skipped_stale, skipped_merged,
         )
 
         if not acc:
