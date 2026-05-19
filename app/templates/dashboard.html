@@ -208,6 +208,16 @@
         options: baseOpts,
     });
 
+    const horizontalBarOpts = {
+        ...baseOpts,
+        indexAxis: 'y',
+        plugins: { ...baseOpts.plugins, legend: { display: false } },
+        scales: {
+            x: { ...gridScale, beginAtZero: true },
+            y: { ...gridScale, beginAtZero: false },
+        },
+    };
+
     if (CONTRIBUTORS.labels.length) {
         new Chart(document.getElementById('contributorsChart'), {
             type: 'bar',
@@ -222,11 +232,7 @@
                     borderRadius: 6,
                 }],
             },
-            options: {
-                ...baseOpts,
-                indexAxis: 'y',
-                plugins: { ...baseOpts.plugins, legend: { display: false } },
-            },
+            options: horizontalBarOpts,
         });
     }
 
@@ -244,11 +250,7 @@
                     borderRadius: 6,
                 }],
             },
-            options: {
-                ...baseOpts,
-                indexAxis: 'y',
-                plugins: { ...baseOpts.plugins, legend: { display: false } },
-            },
+            options: horizontalBarOpts,
         });
     }
 </script>
