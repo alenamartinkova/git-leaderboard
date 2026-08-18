@@ -3,6 +3,7 @@
 <div class="dashboard-header">
     <h2>Repos</h2>
     <form method="post" action="/sync/repos" class="inline-form">
+        <input type="hidden" name="org" value="{{ org or '' }}">
         <input type="hidden" name="next" value="/repos">
         <button type="submit" title="Stiahne len zoznam repozitárov orgu, bez commit histórie" {% if syncing %}disabled{% endif %}>
             ⤓ Načítať zoznam repozitárov
@@ -33,6 +34,7 @@
 <table class="leaderboard">
     <thead>
         <tr>
+            {% if orgs | length > 1 and not org %}<th>Org</th>{% endif %}
             <th>Repo</th>
             <th class="num">Branche</th>
             <th>História od</th>
@@ -43,6 +45,7 @@
     <tbody>
         {% for r in repos %}
         <tr>
+            {% if orgs | length > 1 and not org %}<td class="muted nowrap">{{ r.org or '—' }}</td>{% endif %}
             <td>{{ r.full_name }}{% if r.archived %} <span class="muted">(archived)</span>{% endif %}{% if r.fork %} <span class="muted">(fork)</span>{% endif %}</td>
             <td class="num">{{ "{:,}".format(r.branch_count) }}</td>
             <td>{% if r.history_synced_from %}{{ r.history_synced_from }}{% else %}<span class="muted">nebackfillnuté</span>{% endif %}</td>

@@ -25,6 +25,9 @@ class Repo(Base):
     github_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[str] = mapped_column(String(512), unique=True, nullable=False)
+    # Vlastník repa = organizácia. Drží sa zvlášť, aby sa dalo filtrovať bez
+    # parsovania full_name pri každom dotaze.
+    org: Mapped[str | None] = mapped_column(String(255), index=True)
     private: Mapped[bool] = mapped_column(Boolean, default=False)
     archived: Mapped[bool] = mapped_column(Boolean, default=False)
     fork: Mapped[bool] = mapped_column(Boolean, default=False)

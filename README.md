@@ -17,6 +17,28 @@ docker compose up --build
 
 Token potrebuje `repo` (čítanie privátnych repozitárov orgu) a `read:org`.
 
+### Viac organizácií
+
+```
+GITHUB_ORGS=EsportDynamics,DruhaFirma
+GITHUB_TOKEN_ESPORTDYNAMICS=github_pat_...
+GITHUB_TOKEN_DRUHAFIRMA=github_pat_...
+```
+
+Názov premennej s tokenom je `GITHUB_TOKEN_<ORG>` — org veľkými písmenami, všetko
+okrem písmen a číslic nahradené podčiarkovníkom (`Druha-Firma` →
+`GITHUB_TOKEN_DRUHA_FIRMA`). Kto vlastný token nemá, použije spoločný
+`GITHUB_TOKEN`. Jedna organizácia sa dá stále zadať aj postaru cez `GITHUB_ORG`.
+
+V hlavičke appky potom pribudne prepínač organizácie (pri jednej sa nezobrazuje).
+Výber sa drží v cookie, takže platí naprieč stránkami; `?org=NazovOrgu` v URL ho
+prebije, čo sa hodí na priame odkazy a na API. Prepínač ovplyvní všetko —
+leaderboard, dashboard, ľudí, repá, CSV aj JSON. „Sync all" sa pri vybranom orgu
+zmení na sync len tej organizácie.
+
+Repá si org pamätajú v DB, takže dáta organizácie, ktorú z configu odoberieš,
+nezmiznú — v prepínači ostane a dá sa v nej listovať, len sa už nesynchronizuje.
+
 ## Stránky
 
 | URL | Čo ukazuje |
@@ -85,9 +107,10 @@ zmazané riadky (aj net), počet upravených repozitárov**, zmenené súbory, a
 týždne a riadky/commit.
 
 ```
-GET /api/people/monthly              # celá história
-GET /api/people/monthly?months=12    # posledných 12 mesiacov
-GET /api/people/monthly?login=jkovac # jeden človek
+GET /api/people/monthly                    # celá história, všetky organizácie
+GET /api/people/monthly?months=12          # posledných 12 mesiacov
+GET /api/people/monthly?login=jkovac       # jeden človek
+GET /api/people/monthly?org=EsportDynamics # jedna organizácia
 ```
 
 ```jsonc
@@ -95,6 +118,8 @@ GET /api/people/monthly?login=jkovac # jeden človek
   "org": "...", "generated_at": "...",
   "range": { "months": 12, "since": "2025-09-01" },
   "coverage": { "first_week": "...", "repos_total": 12, "repos_backfilled": 12, "complete": true },
+  "org": "EsportDynamics",                   // null = všetky dokopy
+  "orgs": ["EsportDynamics", "DruhaFirma"],  // čo sa dá vybrať
   "months": ["2025-09", "..."],              // všetky mesiace v odpovedi
   "people": [{
     "login": "...", "avatar_url": "...", "html_url": "...",

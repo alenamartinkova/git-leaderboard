@@ -44,7 +44,29 @@ class LeaderboardRow:
     changed_files: int
 
 
-def _aggregate(db: Session, since: date | None, repo_full_name: str | None = None) -> list[LeaderboardRow]:
+def _org_clause(org: str):
+    """Case-insensitive filter na organizáciu (chodí z URL, tak nech je zhovievavý)."""
+    return func.lower(Repo.org) == org.strip().lower()
+
+
+def _scoped(stmt, org: str | None, repo_full_name: str | None = None):
+    """Pripojí Repo a odfiltruje na org / konkrétne repo. Join sa robí raz."""
+    if not org and not repo_full_name:
+        return stmt
+    stmt = stmt.join(Repo, Repo.id == WeeklyStat.repo_id)
+    if repo_full_name:
+        stmt = stmt.where(Repo.full_name == repo_full_name)
+    if org:
+        stmt = stmt.where(_org_clause(org))
+    return stmt
+
+
+def _aggregate(
+    db: Session,
+    since: date | None,
+    repo_full_name: str | None = None,
+    org: str | None = None,
+) -> list[LeaderboardRow]:
     stmt = (
         select(
             Contributor.login,
@@ -61,8 +83,7 @@ def _aggregate(db: Session, since: date | None, repo_full_name: str | None = Non
     )
     if since is not None:
         stmt = stmt.where(WeeklyStat.week_start >= since)
-    if repo_full_name:
-        stmt = stmt.join(Repo, Repo.id == WeeklyStat.repo_id).where(Repo.full_name == repo_full_name)
+    stmt = _scoped(stmt, org, repo_full_name)
     rows = db.execute(stmt).all()
     return [
         LeaderboardRow(
@@ -83,7 +104,12 @@ def _week_start(d: date) -> date:
     return d - timedelta(days=(d.weekday() + 1) % 7)
 
 
-def leaderboard(db: Session, period: str, repo_full_name: str | None = None) -> list[LeaderboardRow]:
+def leaderboard(
+    db: Session,
+    period: str,
+    repo_full_name: str | None = None,
+    org: str | None = None,
+) -> list[LeaderboardRow]:
     today = datetime.now(UTC).date()
     if period == "week":
         since = _week_start(today)
@@ -93,19 +119,29 @@ def leaderboard(db: Session, period: str, repo_full_name: str | None = None) -> 
         since = None
     else:
         raise ValueError(f"unknown period: {period}")
-    return _aggregate(db, since, repo_full_name)
+    return _aggregate(db, since, repo_full_name, org)
 
 
-def list_repos_with_stats(db: Session) -> list[Repo]:
+def list_repos_with_stats(db: Session, org: str | None = None) -> list[Repo]:
     """Repos that have at least one weekly stat — the only ones worth showing in the filter."""
-    return list(
-        db.execute(
-            select(Repo)
-            .join(WeeklyStat, WeeklyStat.repo_id == Repo.id)
-            .group_by(Repo.id)
-            .order_by(Repo.full_name)
-        ).scalars()
+    stmt = (
+        select(Repo)
+        .join(WeeklyStat, WeeklyStat.repo_id == Repo.id)
+        .group_by(Repo.id)
+        .order_by(Repo.full_name)
     )
+    if org:
+        stmt = stmt.where(_org_clause(org))
+    return list(db.execute(stmt).scalars())
+
+
+def distinct_orgs(db: Session) -> list[str]:
+    """Organizácie, ktoré sú reálne v DB (aj tie, čo už nie sú v configu)."""
+    return [
+        o for (o,) in db.execute(
+            select(Repo.org).where(Repo.org.is_not(None)).distinct().order_by(Repo.org)
+        ).all()
+    ]
 
 
 def last_sync(db: Session) -> SyncRun | None:
@@ -118,11 +154,11 @@ def list_repos(db: Session) -> list[Repo]:
     return list(db.execute(select(Repo).order_by(Repo.full_name)).scalars())
 
 
-def weekly_activity(db: Session, weeks_back: int = 26) -> list[WeeklyTotals]:
+def weekly_activity(db: Session, weeks_back: int = 26, org: str | None = None) -> list[WeeklyTotals]:
     """Org-wide weekly totals for the trend chart."""
     today = datetime.now(UTC).date()
     since = _week_start(today) - timedelta(weeks=weeks_back - 1)
-    rows = db.execute(
+    stmt = (
         select(
             WeeklyStat.week_start,
             func.coalesce(func.sum(WeeklyStat.additions), 0).label("additions"),
@@ -133,7 +169,8 @@ def weekly_activity(db: Session, weeks_back: int = 26) -> list[WeeklyTotals]:
         .where(WeeklyStat.week_start >= since)
         .group_by(WeeklyStat.week_start)
         .order_by(WeeklyStat.week_start)
-    ).all()
+    )
+    rows = db.execute(_scoped(stmt, org)).all()
     return [
         WeeklyTotals(
             week_start=r.week_start,
@@ -146,7 +183,7 @@ def weekly_activity(db: Session, weeks_back: int = 26) -> list[WeeklyTotals]:
     ]
 
 
-def top_repos(db: Session, since: date | None, limit: int = 10) -> list[RepoActivity]:
+def top_repos(db: Session, since: date | None, limit: int = 10, org: str | None = None) -> list[RepoActivity]:
     stmt = (
         select(
             Repo.full_name,
@@ -161,6 +198,8 @@ def top_repos(db: Session, since: date | None, limit: int = 10) -> list[RepoActi
     )
     if since is not None:
         stmt = stmt.where(WeeklyStat.week_start >= since)
+    if org:
+        stmt = stmt.where(_org_clause(org))
     rows = db.execute(stmt).all()
     return [
         RepoActivity(
@@ -173,7 +212,9 @@ def top_repos(db: Session, since: date | None, limit: int = 10) -> list[RepoActi
     ]
 
 
-def period_totals(db: Session, since: date, until: date | None = None) -> PeriodTotals:
+def period_totals(
+    db: Session, since: date, until: date | None = None, org: str | None = None
+) -> PeriodTotals:
     stmt = select(
         func.coalesce(func.sum(WeeklyStat.additions), 0),
         func.coalesce(func.sum(WeeklyStat.deletions), 0),
@@ -183,7 +224,7 @@ def period_totals(db: Session, since: date, until: date | None = None) -> Period
     ).where(WeeklyStat.week_start >= since)
     if until is not None:
         stmt = stmt.where(WeeklyStat.week_start < until)
-    row = db.execute(stmt).one()
+    row = db.execute(_scoped(stmt, org)).one()
     return PeriodTotals(
         additions=row[0],
         deletions=row[1],
@@ -194,10 +235,13 @@ def period_totals(db: Session, since: date, until: date | None = None) -> Period
 
 
 def list_repos_paginated(
-    db: Session, page: int, per_page: int, q: str | None = None
+    db: Session, page: int, per_page: int, q: str | None = None, org: str | None = None
 ) -> tuple[list[Repo], int]:
     base = select(Repo)
     count_stmt = select(func.count()).select_from(Repo)
+    if org:
+        base = base.where(_org_clause(org))
+        count_stmt = count_stmt.where(_org_clause(org))
     if q:
         pattern = f"%{q.strip().lower()}%"
         base = base.where(func.lower(Repo.full_name).like(pattern))
@@ -313,6 +357,7 @@ def people_overview(
     db: Session,
     login: str | None = None,
     repo_full_name: str | None = None,
+    org: str | None = None,
 ) -> list[PersonRow]:
     """Per-contributor totals over the whole stored history."""
     stmt = (
@@ -335,8 +380,7 @@ def people_overview(
     )
     if login:
         stmt = stmt.where(func.lower(Contributor.login) == login.strip().lower())
-    if repo_full_name:
-        stmt = stmt.join(Repo, Repo.id == WeeklyStat.repo_id).where(Repo.full_name == repo_full_name)
+    stmt = _scoped(stmt, org, repo_full_name)
 
     return [
         PersonRow(
@@ -387,9 +431,9 @@ def contributor_by_login(db: Session, login: str) -> Contributor | None:
     ).scalar_one_or_none()
 
 
-def person_yearly(db: Session, contributor_id: int) -> list[YearTotals]:
+def person_yearly(db: Session, contributor_id: int, org: str | None = None) -> list[YearTotals]:
     year = cast(func.extract("year", WeeklyStat.week_start), Integer).label("year")
-    rows = db.execute(
+    stmt = (
         select(
             year,
             func.count(func.distinct(WeeklyStat.week_start)).label("active_weeks"),
@@ -401,7 +445,8 @@ def person_yearly(db: Session, contributor_id: int) -> list[YearTotals]:
         .where(WeeklyStat.contributor_id == contributor_id)
         .group_by(year)
         .order_by(year)
-    ).all()
+    )
+    rows = db.execute(_scoped(stmt, org)).all()
     return [
         YearTotals(
             year=r.year,
@@ -415,8 +460,10 @@ def person_yearly(db: Session, contributor_id: int) -> list[YearTotals]:
     ]
 
 
-def person_repos(db: Session, contributor_id: int, limit: int = 15) -> list[PersonRepo]:
-    rows = db.execute(
+def person_repos(
+    db: Session, contributor_id: int, limit: int = 15, org: str | None = None
+) -> list[PersonRepo]:
+    stmt = (
         select(
             Repo.full_name,
             func.coalesce(func.sum(WeeklyStat.additions), 0).label("additions"),
@@ -431,7 +478,10 @@ def person_repos(db: Session, contributor_id: int, limit: int = 15) -> list[Pers
         .group_by(Repo.id)
         .order_by(func.sum(WeeklyStat.commits).desc())
         .limit(limit)
-    ).all()
+    )
+    if org:
+        stmt = stmt.where(_org_clause(org))
+    rows = db.execute(stmt).all()
     return [
         PersonRepo(
             full_name=r.full_name,
@@ -446,12 +496,17 @@ def person_repos(db: Session, contributor_id: int, limit: int = 15) -> list[Pers
     ]
 
 
-def coverage(db: Session) -> Coverage:
-    first_week = db.execute(select(func.min(WeeklyStat.week_start))).scalar()
-    repos_total = db.execute(select(func.count()).select_from(Repo)).scalar_one()
-    repos_backfilled = db.execute(
-        select(func.count()).select_from(Repo).where(Repo.history_synced_from.is_not(None))
-    ).scalar_one()
+def coverage(db: Session, org: str | None = None) -> Coverage:
+    first = select(func.min(WeeklyStat.week_start))
+    total = select(func.count()).select_from(Repo)
+    done = select(func.count()).select_from(Repo).where(Repo.history_synced_from.is_not(None))
+    if org:
+        first = _scoped(first, org)
+        total = total.where(_org_clause(org))
+        done = done.where(_org_clause(org))
+    first_week = db.execute(first).scalar()
+    repos_total = db.execute(total).scalar_one()
+    repos_backfilled = db.execute(done).scalar_one()
     return Coverage(first_week=first_week, repos_total=repos_total, repos_backfilled=repos_backfilled)
 
 
@@ -507,6 +562,7 @@ def people_monthly(
     db: Session,
     since: date | None = None,
     login: str | None = None,
+    org: str | None = None,
 ) -> list[PersonMonth]:
     """Per-contributor totals grouped by month.
 
@@ -533,6 +589,7 @@ def people_monthly(
         stmt = stmt.where(WeeklyStat.week_start >= since)
     if login:
         stmt = stmt.where(func.lower(Contributor.login) == login.strip().lower())
+    stmt = _scoped(stmt, org)
 
     return [
         PersonMonth(

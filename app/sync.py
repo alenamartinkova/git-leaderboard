@@ -7,7 +7,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
-from app.config import settings
+from app.config import OrgConfig, settings, token_env_key
 from app.db import SessionLocal
 from app.github import GitHubClient
 from app.models import Contributor, Repo, SyncRun, WeeklyStat
@@ -58,6 +58,7 @@ def _upsert_repo(db: Session, repo: dict, branch_count: int | None = None) -> Re
         "github_id": repo["id"],
         "name": repo["name"],
         "full_name": repo["full_name"],
+        "org": (repo.get("owner") or {}).get("login") or repo["full_name"].split("/", 1)[0],
         "private": repo.get("private", False),
         "archived": repo.get("archived", False),
         "fork": repo.get("fork", False),
@@ -253,16 +254,33 @@ def _org_targets(repos: list[dict]) -> list[dict]:
     return targets
 
 
-async def run_sync(full: bool = False) -> SyncRun:
-    """Sync every repo in the org.
+def _resolve_orgs(org: str | None) -> list[OrgConfig]:
+    """Organizácie na spracovanie — jedna konkrétna, alebo všetky nakonfigurované."""
+    if org:
+        cfg = settings.org(org)
+        if cfg is None:
+            raise RuntimeError(f"organization {org!r} is not configured (GITHUB_ORGS)")
+        targets = [cfg]
+    else:
+        targets = settings.orgs
+    if not targets:
+        raise RuntimeError("no organization configured — set GITHUB_ORGS (or GITHUB_ORG) in .env")
+    missing = [c.name for c in targets if not c.token]
+    if missing:
+        raise RuntimeError(
+            "missing token for " + ", ".join(missing)
+            + " — set " + ", ".join(token_env_key(n) for n in missing) + " (or GITHUB_TOKEN)"
+        )
+    return targets
+
+
+async def run_sync(full: bool = False, org: str | None = None) -> SyncRun:
+    """Sync every repo in every configured org (or just ``org`` if given).
 
     ``full=True`` forces a complete re-read of every repo's history (use after
     changing the metric definitions). Otherwise repos that already have full
     history only get the recent window topped up.
     """
-    if not settings.github_token or not settings.github_org:
-        raise RuntimeError("GITHUB_TOKEN and GITHUB_ORG must be set in .env")
-
     async with _sync_lock:
         db = SessionLocal()
         run = SyncRun(scope="org", mode="full" if full else "incremental")
@@ -272,30 +290,39 @@ async def run_sync(full: bool = False) -> SyncRun:
 
         repos_synced = 0
         try:
-            async with GitHubClient(settings.github_token) as gh:
-                repos = await gh.list_org_repos(settings.github_org)
-                logger.info("found %d repos in %s", len(repos), settings.github_org)
+            org_configs = _resolve_orgs(org)
+            # Zoznamy repozitárov naprieč orgami načítame najprv, aby sa dal
+            # ukázať zmysluplný progres (x/y) za celý beh, nie za každý org zvlášť.
+            per_org: list[tuple[OrgConfig, list[dict]]] = []
+            for cfg in org_configs:
+                async with GitHubClient(cfg.token) as gh:
+                    repos = await gh.list_org_repos(cfg.name)
+                logger.info("found %d repos in %s", len(repos), cfg.name)
+                per_org.append((cfg, _org_targets(repos)))
 
-                targets = _org_targets(repos)
-                run.total_repos = len(targets)
-                db.commit()
+            run.total_repos = sum(len(targets) for _, targets in per_org)
+            db.commit()
 
-                for idx, repo_data in enumerate(targets, start=1):
-                    run.current_index = idx
-                    run.current_repo = repo_data["full_name"]
-                    db.commit()
+            idx = 0
+            for cfg, targets in per_org:
+                async with GitHubClient(cfg.token) as gh:
+                    for repo_data in targets:
+                        idx += 1
+                        run.current_index = idx
+                        run.current_repo = repo_data["full_name"]
+                        db.commit()
 
-                    if not full and _can_skip_repo(db, repo_data):
-                        logger.info("skipping %s (no pushes since last sync)", repo_data["full_name"])
-                    elif await _sync_one(db, gh, repo_data, full=full):
-                        repos_synced += 1
-                    run.repos_synced = repos_synced
-                    db.commit()
+                        if not full and _can_skip_repo(db, repo_data):
+                            logger.info("skipping %s (no pushes since last sync)", repo_data["full_name"])
+                        elif await _sync_one(db, gh, repo_data, full=full):
+                            repos_synced += 1
+                        run.repos_synced = repos_synced
+                        db.commit()
 
             run.finished_at = datetime.now(UTC)
             run.current_repo = None
             db.commit()
-            logger.info("sync finished: %d repos", repos_synced)
+            logger.info("sync finished: %d repos across %d org(s)", repos_synced, len(org_configs))
         except Exception as exc:
             logger.exception("sync failed")
             run.error = str(exc)[:2000]
@@ -308,15 +335,12 @@ async def run_sync(full: bool = False) -> SyncRun:
         return run
 
 
-async def run_sync_repo_list() -> SyncRun:
-    """Fetch just the org's repo list — no commit history.
+async def run_sync_repo_list(org: str | None = None) -> SyncRun:
+    """Fetch just the repo lists — no commit history.
 
     Cheap (one REST page per 100 repos) and finishes in seconds, so the repos
     page fills up right away and each repo can then be synced individually.
     """
-    if not settings.github_token or not settings.github_org:
-        raise RuntimeError("GITHUB_TOKEN and GITHUB_ORG must be set in .env")
-
     async with _sync_lock:
         db = SessionLocal()
         run = SyncRun(scope="list", mode="metadata")
@@ -325,23 +349,25 @@ async def run_sync_repo_list() -> SyncRun:
         db.refresh(run)
 
         try:
-            async with GitHubClient(settings.github_token) as gh:
-                repos = await gh.list_org_repos(settings.github_org)
+            org_configs = _resolve_orgs(org)
+            total = 0
+            for cfg in org_configs:
+                async with GitHubClient(cfg.token) as gh:
+                    repos = await gh.list_org_repos(cfg.name)
                 targets = _org_targets(repos)
-                run.total_repos = len(targets)
-                db.commit()
-
-                for idx, repo_data in enumerate(targets, start=1):
+                for repo_data in targets:
                     _upsert_repo(db, repo_data)
-                    run.current_index = idx
-                    run.repos_synced = idx
+                    total += 1
+                    run.current_index = total
+                    run.repos_synced = total
                     run.current_repo = repo_data["full_name"]
+                run.total_repos = total
                 db.commit()
+                logger.info("repo list synced: %d repos in %s", len(targets), cfg.name)
 
             run.finished_at = datetime.now(UTC)
             run.current_repo = None
             db.commit()
-            logger.info("repo list synced: %d repos in %s", len(targets), settings.github_org)
         except Exception as exc:
             logger.exception("repo list sync failed")
             run.error = str(exc)[:2000]
@@ -356,11 +382,16 @@ async def run_sync_repo_list() -> SyncRun:
 
 async def run_sync_repo(full_name: str, full: bool = False) -> SyncRun:
     """Sync a single repo by full_name (owner/repo)."""
-    if not settings.github_token:
-        raise RuntimeError("GITHUB_TOKEN must be set in .env")
     if "/" not in full_name:
         raise ValueError("repo full_name must be in the form 'owner/repo'")
     owner, name = full_name.split("/", 1)
+
+    # Token sa vyberá podľa vlastníka repa — každý org môže mať vlastný.
+    token = settings.token_for(owner)
+    if not token:
+        raise RuntimeError(
+            f"no token for {owner} — set {token_env_key(owner)} (or GITHUB_TOKEN) in .env"
+        )
 
     async with _sync_lock:
         db = SessionLocal()
@@ -376,7 +407,7 @@ async def run_sync_repo(full_name: str, full: bool = False) -> SyncRun:
         db.refresh(run)
 
         try:
-            async with GitHubClient(settings.github_token) as gh:
+            async with GitHubClient(token) as gh:
                 repo_data = await gh.get_repo(owner, name)
                 if await _sync_one(db, gh, repo_data, full=full):
                     run.repos_synced = 1

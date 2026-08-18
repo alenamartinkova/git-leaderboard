@@ -11,7 +11,21 @@
         <div class="header-inner">
             <div>
                 <h1>🏆 Git Leaderboard</h1>
-                <p class="org">org: <code>{{ org }}</code></p>
+                {% if orgs | length > 1 %}
+                <form method="get" action="/select-org" class="org-picker">
+                    <input type="hidden" name="next" value="{{ request.url.path }}">
+                    <label class="org-label" for="org-select">org:</label>
+                    <select id="org-select" name="org" onchange="this.form.submit()">
+                        <option value="">Všetky organizácie</option>
+                        {% for o in orgs %}
+                        <option value="{{ o }}" {% if o == org %}selected{% endif %}>{{ o }}</option>
+                        {% endfor %}
+                    </select>
+                    <noscript><button type="submit">OK</button></noscript>
+                </form>
+                {% else %}
+                <p class="org">org: <code>{{ org_label }}</code></p>
+                {% endif %}
             </div>
             <nav class="topnav">
                 {% set path = request.url.path %}

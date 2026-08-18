@@ -882,3 +882,33 @@ footer button.ghost:hover { background: var(--surface-hover); filter: none; box-
 .monthly-grid tbody tr:hover { background: none; }
 
 .export-links { display: flex; gap: 0.4rem; align-items: center; }
+
+/* ---------- Org selector ---------- */
+.org-picker {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin: 0.35rem 0 0;
+}
+.org-label { color: var(--muted); font-size: 0.9rem; }
+.org-picker select {
+    appearance: none;
+    -webkit-appearance: none;
+    background: var(--surface);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.3rem 1.9rem 0.3rem 0.7rem;
+    font-size: 0.85rem;
+    font-family: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%),
+                      linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+    background-position: calc(100% - 14px) 50%, calc(100% - 9px) 50%;
+    background-size: 5px 5px;
+    background-repeat: no-repeat;
+    transition: border-color 0.15s;
+}
+.org-picker select:hover { border-color: var(--border-strong); }
+.org-picker select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgba(110,168,255,0.15); }

@@ -42,6 +42,10 @@ def init_db() -> None:
         conn.execute(text("ALTER TABLE weekly_stats DROP COLUMN IF EXISTS branches_created"))
         conn.execute(text("ALTER TABLE repos ADD COLUMN IF NOT EXISTS branch_count INTEGER NOT NULL DEFAULT 0"))
         conn.execute(text("ALTER TABLE repos ADD COLUMN IF NOT EXISTS history_synced_from DATE"))
+        conn.execute(text("ALTER TABLE repos ADD COLUMN IF NOT EXISTS org VARCHAR(255)"))
+        # Repá z čias pred multi-org majú org odvoditeľný z 'owner/name'.
+        conn.execute(text("UPDATE repos SET org = split_part(full_name, '/', 1) WHERE org IS NULL"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_repos_org ON repos (org)"))
         conn.execute(text("ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS mode VARCHAR(16) DEFAULT 'incremental'"))
         # Per-person queries scan by contributor across the whole history.
         conn.execute(text(
