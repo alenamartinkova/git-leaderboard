@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% from "_metrics.html" import num, dec with context %}
+{% block title %}{{ person.login }} — Git Leaderboard{% endblock %}
+{% block content %}
+
+<p class="breadcrumb"><a href="/people">← Ľudia</a></p>
+
+<section class="person-header">
+    {% if person.avatar_url %}<img class="person-avatar" src="{{ person.avatar_url }}" alt="" width="72" height="72">{% endif %}
+    <div>
+        <h2>{{ person.login }}</h2>
+        <p class="page-sub">
+            {{ row.first_week }} → {{ row.last_week }} ·
+            {{ num(row.active_weeks) }} aktívnych týždňov z {{ num(row.span_weeks) }} ·
+            {{ num(row.repos) }} {% if row.repos == 1 %}repo{% elif 2 <= row.repos <= 4 %}repá{% else %}rep{% endif %}
+            {% if person.html_url %} · <a href="{{ person.html_url }}" target="_blank" rel="noopener">GitHub ↗</a>{% endif %}
+        </p>
+    </div>
+</section>
+
+<section class="summary-grid">
+    <div class="summary-card">
+        <div class="summary-label">Commity (celkovo)</div>
+        <div class="summary-value">{{ num(row.commits) }}</div>
+        <div class="summary-delta">{{ dec(row.commits_per_week) }} / aktívny týždeň</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">+ riadky (celkovo)</div>
+        <div class="summary-value pos">+{{ num(row.additions) }}</div>
+        <div class="summary-delta">{{ dec(row.additions_per_week) }} / aktívny týždeň</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">− riadky (celkovo)</div>
+        <div class="summary-value neg">−{{ num(row.deletions) }}</div>
+        <div class="summary-delta">net {{ num(row.net) }} riadkov</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">Riadky / commit</div>
+        <div class="summary-value">{{ dec(row.lines_per_commit) }}</div>
+        <div class="summary-delta">{{ dec(row.files_per_commit) }} súborov / commit</div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-label">Zmenené súbory</div>
+        <div class="summary-value">{{ num(row.changed_files) }}</div>
+        <div class="summary-delta">v {{ num(row.repos) }} repách</div>
+    </div>
+</section>
+
+{% if chart.labels %}
+<section class="chart-card">
+    <h3>Riadky po mesiacoch</h3>
+    <canvas id="linesChart" height="110"></canvas>
+</section>
+
+<section class="chart-card">
+    <h3>Commity po mesiacoch</h3>
+    <canvas id="commitsChart" height="110"></canvas>
+</section>
+
+<section class="chart-card">
+    <h3>Kumulatívne net riadky (+ mínus −)</h3>
+    <canvas id="cumulativeChart" height="110"></canvas>
+</section>
+{% endif %}
+
+{% if months %}
+<section class="chart-card">
+    <h3>Po mesiacoch</h3>
+    <div class="table-scroll">
+        <table class="leaderboard no-podium">
+            <thead>
+                <tr>
+                    <th>Mesiac</th>
+                    <th class="num">Akt. týždne</th>
+                    <th class="num">Repá</th>
+                    <th class="num">Commity</th>
+                    <th class="num">+ riadky</th>
+                    <th class="num">− riadky</th>
+                    <th class="num">Net</th>
+                    <th class="num">Súbory</th>
+                    <th class="num">Riadky/commit</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for m in months %}
+                <tr>
+                    <td class="nowrap">{{ m.month.strftime('%Y-%m') }}</td>
+                    <td class="num">{{ num(m.active_weeks) }}</td>
+                    <td class="num">{{ num(m.repos) }}</td>
+                    <td class="num">{{ num(m.commits) }}</td>
+                    <td class="num pos">+{{ num(m.additions) }}</td>
+                    <td class="num neg">−{{ num(m.deletions) }}</td>
+                    <td class="num">{{ num(m.net) }}</td>
+                    <td class="num">{{ num(m.changed_files) }}</td>
+                    <td class="num">{{ dec(m.lines_per_commit) }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <p class="pagination-info">Najnovší mesiac hore. Týždeň patrí mesiacu, v ktorom začal.</p>
+</section>
+{% endif %}
+
+{% if years %}
+<section class="chart-card">
+    <h3>Po rokoch</h3>
+    <table class="leaderboard no-podium">
+        <thead>
+            <tr>
+                <th>Rok</th>
+                <th class="num">Akt. týždne</th>
+                <th class="num">Commity</th>
+                <th class="num">+ riadky</th>
+                <th class="num">− riadky</th>
+                <th class="num">Súbory</th>
+                <th class="num">Riadky/commit</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for y in years %}
+            <tr>
+                <td>{{ y.year }}</td>
+                <td class="num">{{ num(y.active_weeks) }}</td>
+                <td class="num">{{ num(y.commits) }}</td>
+                <td class="num pos">+{{ num(y.additions) }}</td>
+                <td class="num neg">−{{ num(y.deletions) }}</td>
+                <td class="num">{{ num(y.changed_files) }}</td>
+                <td class="num">{{ dec(y.lines_per_commit) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% if repos %}
+<section class="chart-card">
+    <h3>Repozitáre</h3>
+    <table class="leaderboard no-podium">
+        <thead>
+            <tr>
+                <th>Repo</th>
+                <th>Obdobie</th>
+                <th class="num">Commity</th>
+                <th class="num">+ riadky</th>
+                <th class="num">− riadky</th>
+                <th class="num">Súbory</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for r in repos %}
+            <tr>
+                <td>{{ r.full_name }}</td>
+                <td class="muted nowrap">{{ r.first_week }} → {{ r.last_week }}</td>
+                <td class="num">{{ num(r.commits) }}</td>
+                <td class="num pos">+{{ num(r.additions) }}</td>
+                <td class="num neg">−{{ num(r.deletions) }}</td>
+                <td class="num">{{ num(r.changed_files) }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endif %}
+
+{% if chart.labels %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script>
+    const CHART = {{ chart | tojson }};
+
+    const TEXT = '#e6edf3';
+    const MUTED = '#8b949e';
+    const GRID = 'rgba(138,148,158,0.12)';
+    const ACCENT = '#6ea8ff';
+    const ACCENT2 = '#a371f7';
+    const POS = '#3fb950';
+    const NEG = '#f85149';
+
+    Chart.defaults.color = MUTED;
+    Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", system-ui, sans-serif';
+    Chart.defaults.borderColor = GRID;
+
+    const gridScale = {
+        grid: { color: GRID, drawBorder: false },
+        ticks: { color: MUTED, font: { size: 11 } },
+    };
+    const baseOpts = {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+            legend: { labels: { color: TEXT, usePointStyle: true, padding: 14 } },
+            tooltip: {
+                backgroundColor: '#161b22',
+                borderColor: '#2a3140',
+                borderWidth: 1,
+                titleColor: TEXT,
+                bodyColor: TEXT,
+                padding: 10,
+                callbacks: {
+                    label: (ctx) => `${ctx.dataset.label}: ${ctx.parsed.y.toLocaleString()}`,
+                },
+            },
+        },
+        scales: { x: gridScale, y: { ...gridScale, beginAtZero: true } },
+    };
+
+    const line = (label, data, color, fillColor) => ({
+        label,
+        data,
+        borderColor: color,
+        backgroundColor: fillColor,
+        fill: true,
+        tension: 0.3,
+        pointRadius: 1,
+        pointHoverRadius: 5,
+        borderWidth: 2,
+    });
+
+    new Chart(document.getElementById('linesChart'), {
+        type: 'line',
+        data: {
+            labels: CHART.labels,
+            datasets: [
+                line('+ riadky', CHART.additions, POS, 'rgba(63,185,80,0.12)'),
+                line('− riadky', CHART.deletions, NEG, 'rgba(248,81,73,0.10)'),
+            ],
+        },
+        options: baseOpts,
+    });
+
+    new Chart(document.getElementById('commitsChart'), {
+        type: 'bar',
+        data: {
+            labels: CHART.labels,
+            datasets: [{
+                label: 'Commity',
+                data: CHART.commits,
+                backgroundColor: 'rgba(110,168,255,0.55)',
+                borderColor: ACCENT,
+                borderWidth: 1,
+                borderRadius: 4,
+            }],
+        },
+        options: baseOpts,
+    });
+
+    new Chart(document.getElementById('cumulativeChart'), {
+        type: 'line',
+        data: {
+            labels: CHART.labels,
+            datasets: [line('Kumulatívne net riadky', CHART.cumulative_net, ACCENT2, 'rgba(163,113,247,0.15)')],
+        },
+        options: { ...baseOpts, scales: { x: gridScale, y: { ...gridScale, beginAtZero: false } } },
+    });
+</script>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% from "_metrics.html" import num, dec, compact, metric_value with context %}
+{% block title %}Ľudia — Git Leaderboard{% endblock %}
+{% block content %}
+
+<div class="dashboard-header">
+    <div>
+        <h2>Ľudia</h2>
+        <p class="page-sub">Celá história každého človeka v orgu — od jeho prvého commitu po dnešok.</p>
+    </div>
+    <div class="export-links">
+        <a class="clear-btn"
+           href="{% if view == 'totals' %}/people.csv?by=total&sort={{ sort }}{% else %}/people.csv?by=month&months={{ months }}{% endif %}">
+            ⬇ CSV{% if view != 'totals' %} (po mesiacoch){% endif %}
+        </a>
+        <a class="clear-btn" href="/api/people/monthly{% if view != 'totals' and months %}?months={{ months }}{% endif %}"
+           target="_blank" rel="noopener" title="Per-user, per-month JSON pre vlastný frontend">{ } JSON</a>
+    </div>
+</div>
+
+<p class="coverage-note {% if not coverage.complete %}warn{% endif %}">
+    {% if coverage.first_week %}Dáta od <strong>{{ coverage.first_week }}</strong> · {% endif %}
+    kompletnú históriu má {{ coverage.repos_backfilled }}/{{ coverage.repos_total }} repozitárov.
+    {% if not coverage.complete %}
+        Zvyšok sa dotiahne pri najbližšom syncu (alebo stlač <em>Full backfill</em> dole).
+    {% endif %}
+</p>
+
+<div class="filters">
+    <nav class="tabs">
+        <a href="/people?view=months&metric={{ metric }}&months={{ months }}" class="{% if view != 'totals' %}active{% endif %}">Po mesiacoch</a>
+        <a href="/people?view=totals&sort={{ sort }}" class="{% if view == 'totals' %}active{% endif %}">Súhrn</a>
+    </nav>
+
+    {% if view == 'totals' %}
+    <form method="get" action="/people" class="repo-filter">
+        <input type="hidden" name="view" value="totals">
+        <label for="sort" class="muted">Zoradiť:</label>
+        <select id="sort" name="sort" onchange="this.form.submit()">
+            {% for key, label in sorts.items() %}
+            <option value="{{ key }}" {% if key == sort %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </form>
+    {% else %}
+    <form method="get" action="/people" class="repo-filter">
+        <input type="hidden" name="view" value="months">
+        <label for="metric" class="muted">Metrika:</label>
+        <select id="metric" name="metric" onchange="this.form.submit()">
+            {% for key, label in metrics.items() %}
+            <option value="{{ key }}" {% if key == metric %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+        <label for="months" class="muted">Obdobie:</label>
+        <select id="months" name="months" onchange="this.form.submit()">
+            {% for key, label in month_ranges.items() %}
+            <option value="{{ key }}" {% if key == months %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+        </select>
+    </form>
+    {% endif %}
+</div>
+
+{% if not rows %}
+    <p class="empty">Žiadne dáta. Spusti sync (footer) alebo skontroluj <code>GITHUB_TOKEN</code> / <code>GITHUB_ORG</code> v <code>.env</code>.</p>
+
+{% elif view == 'totals' %}
+<table class="leaderboard people-table no-podium">
+    <thead>
+        <tr>
+            <th>#</th>
+            <th>Človek</th>
+            <th>Obdobie</th>
+            <th class="num">Akt. týždne</th>
+            <th class="num">Repá</th>
+            <th class="num">Commity</th>
+            <th class="num">+ riadky</th>
+            <th class="num">− riadky</th>
+            <th class="num">Súbory</th>
+            <th class="num">Riadky<br><span class="th-sub">/ commit</span></th>
+            <th class="num">+ riadky<br><span class="th-sub">/ týždeň</span></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in rows %}
+        <tr>
+            <td class="rank">{{ loop.index }}</td>
+            <td class="who">
+                {% if r.avatar_url %}<img src="{{ r.avatar_url }}" alt="" width="28" height="28">{% endif %}
+                <a href="/people/{{ r.login }}">{{ r.login }}</a>
+            </td>
+            <td class="muted nowrap">{{ r.first_week }} → {{ r.last_week }}</td>
+            <td class="num">{{ num(r.active_weeks) }}</td>
+            <td class="num">{{ num(r.repos) }}</td>
+            <td class="num">{{ num(r.commits) }}</td>
+            <td class="num pos">+{{ num(r.additions) }}</td>
+            <td class="num neg">−{{ num(r.deletions) }}</td>
+            <td class="num">{{ num(r.changed_files) }}</td>
+            <td class="num">{{ dec(r.lines_per_commit) }}</td>
+            <td class="num">{{ dec(r.additions_per_week) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+<p class="pagination-info">
+    Rýchlosti sú na <em>aktívny</em> týždeň — týždeň, v ktorom má človek aspoň jeden commit.
+</p>
+
+{% else %}
+<div class="grid-scroll">
+    <table class="leaderboard monthly-grid no-podium">
+        <thead>
+            <tr>
+                <th class="sticky-col">Človek</th>
+                <th class="num total-col">{% if metric == 'lines_per_commit' %}Priemer{% else %}Spolu{% endif %}</th>
+                {% for m in month_cols %}
+                <th class="num month-col">{{ m.strftime('%Y') }}<br><span class="th-sub">{{ m.strftime('%m') }}</span></th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in grid %}
+            <tr>
+                <td class="sticky-col"><a href="/people/{{ row.login }}">{{ row.login }}</a></td>
+                <td class="num total-col">{{ metric_value(row.total, metric) }}</td>
+                {% for c in row.cells %}
+                <td class="num cell" {% if c.intensity %}style="background: rgba(110,168,255,{{ (c.intensity * 0.5)|round(3) }})"{% endif %}
+                    {% if c.stat %}title="{{ row.login }} · {{ c.month.strftime('%Y-%m') }}&#10;commity: {{ num(c.stat.commits) }}&#10;+{{ num(c.stat.additions) }} / −{{ num(c.stat.deletions) }} riadkov&#10;súbory: {{ num(c.stat.changed_files) }}&#10;riadky/commit: {{ dec(c.stat.lines_per_commit) }}&#10;aktívne týždne: {{ c.stat.active_weeks }} · repá: {{ c.stat.repos }}"{% endif %}>
+                    {{ metric_value(c.value, metric) }}
+                </td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+<p class="pagination-info">
+    Metrika: <strong>{{ metrics[metric] }}</strong>, mesiace zľava doprava. Podfarbenie je podiel
+    voči najsilnejšej bunke v tabuľke, <code>·</code> = žiadna aktivita. Hover nad bunkou ukáže
+    všetky čísla za daný mesiac. Týždeň patrí mesiacu, v ktorom začal.
+</p>
+{% endif %}
+{% endblock %}

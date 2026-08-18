@@ -46,8 +46,8 @@
             <td class="rank">{{ loop.index }}</td>
             <td class="who">
                 {% if r.avatar_url %}<img src="{{ r.avatar_url }}" alt="" width="28" height="28">{% endif %}
-                {% if r.html_url %}<a href="{{ r.html_url }}" target="_blank" rel="noopener">{{ r.login }}</a>
-                {% else %}{{ r.login }}{% endif %}
+                <a href="/people/{{ r.login }}">{{ r.login }}</a>
+                {% if r.html_url %}<a class="ext-link" href="{{ r.html_url }}" target="_blank" rel="noopener" title="GitHub profil">↗</a>{% endif %}
             </td>
             <td class="num pos">+{{ "{:,}".format(r.additions) }}</td>
             <td class="num neg">−{{ "{:,}".format(r.deletions) }}</td>

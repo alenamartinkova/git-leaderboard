@@ -30,6 +30,9 @@ class Repo(Base):
     fork: Mapped[bool] = mapped_column(Boolean, default=False)
     branch_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Prvý týždeň, od ktorého máme kompletnú históriu. NULL = repo ešte nebolo
+    # nikdy backfillnuté a najbližší sync ho stiahne od prvého commitu.
+    history_synced_from: Mapped[date | None] = mapped_column(Date)
 
     stats: Mapped[list["WeeklyStat"]] = relationship(back_populates="repo")
 
@@ -66,4 +69,5 @@ class SyncRun(Base):
     current_index: Mapped[int] = mapped_column(Integer, default=0)
     current_repo: Mapped[str | None] = mapped_column(String(512))
     scope: Mapped[str] = mapped_column(String(16), default="org")  # "org" or "repo"
+    mode: Mapped[str] = mapped_column(String(16), default="incremental")  # "full" or "incremental"
     error: Mapped[str | None] = mapped_column(String(2048))

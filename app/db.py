@@ -41,6 +41,13 @@ def init_db() -> None:
         conn.execute(text("ALTER TABLE weekly_stats ADD COLUMN IF NOT EXISTS changed_files INTEGER NOT NULL DEFAULT 0"))
         conn.execute(text("ALTER TABLE weekly_stats DROP COLUMN IF EXISTS branches_created"))
         conn.execute(text("ALTER TABLE repos ADD COLUMN IF NOT EXISTS branch_count INTEGER NOT NULL DEFAULT 0"))
+        conn.execute(text("ALTER TABLE repos ADD COLUMN IF NOT EXISTS history_synced_from DATE"))
+        conn.execute(text("ALTER TABLE sync_runs ADD COLUMN IF NOT EXISTS mode VARCHAR(16) DEFAULT 'incremental'"))
+        # Per-person queries scan by contributor across the whole history.
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_weekly_stats_contributor_week "
+            "ON weekly_stats (contributor_id, week_start)"
+        ))
 
     # Any sync run still marked as in-progress at startup was killed by a restart —
     # mark it so the UI doesn't show "running…" forever.

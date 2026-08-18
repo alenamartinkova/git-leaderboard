@@ -1,10 +1,9 @@
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import httpx
-
-from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +33,7 @@ query($owner: String!, $name: String!, $cursor: String) {
 # Skips merge commits in code because their additions/deletions double-count branch
 # contents and the REST /stats endpoint we replaced ignored them too.
 _BRANCH_HISTORY_QUERY = """
-query($owner: String!, $name: String!, $branch: String!, $since: GitTimestamp!, $cursor: String) {
+query($owner: String!, $name: String!, $branch: String!, $since: GitTimestamp, $cursor: String) {
   repository(owner: $owner, name: $name) {
     ref(qualifiedName: $branch) {
       target {
@@ -139,13 +138,42 @@ class GitHubClient:
             page += 1
         return branches
 
-    async def _graphql(self, query: str, variables: dict) -> dict:
-        r = await self._client.post("/graphql", json={"query": query, "variables": variables})
-        r.raise_for_status()
-        payload = r.json()
-        if "errors" in payload:
-            raise RuntimeError(f"GraphQL errors: {payload['errors']}")
-        return payload["data"]
+    async def _graphql(self, query: str, variables: dict, attempts: int = 5) -> dict:
+        """POST a GraphQL query, backing off on rate limits.
+
+        A full backfill walks far more history than the old 365-day window, so
+        hitting the secondary rate limit is a normal event, not a failure.
+        """
+        delay = 5.0
+        for attempt in range(1, attempts + 1):
+            r = await self._client.post("/graphql", json={"query": query, "variables": variables})
+
+            if r.status_code in (403, 429) or r.status_code >= 500:
+                if attempt == attempts:
+                    r.raise_for_status()
+                wait = float(r.headers.get("Retry-After") or delay)
+                logger.warning(
+                    "github %s on graphql, retrying in %.0fs (attempt %d/%d)",
+                    r.status_code, wait, attempt, attempts,
+                )
+                await asyncio.sleep(wait)
+                delay = min(delay * 2, 120.0)
+                continue
+
+            r.raise_for_status()
+            payload = r.json()
+            errors = payload.get("errors")
+            if errors:
+                types = {e.get("type") for e in errors}
+                if "RATE_LIMITED" in types and attempt < attempts:
+                    logger.warning("graphql RATE_LIMITED, retrying in %.0fs", delay)
+                    await asyncio.sleep(delay)
+                    delay = min(delay * 2, 120.0)
+                    continue
+                raise RuntimeError(f"GraphQL errors: {errors}")
+            return payload["data"]
+
+        raise RuntimeError("graphql: retries exhausted")
 
     async def _list_branches(self, owner: str, repo: str) -> tuple[list[dict[str, Any]], str | None]:
         """Returns ([{name, tip_oid, tip_date}], default branch name or None)."""
@@ -172,12 +200,16 @@ class GitHubClient:
             cursor = refs["pageInfo"]["endCursor"]
         return branches, default
 
-    async def contributor_stats(self, owner: str, repo: str) -> list[dict[str, Any]] | None:
+    async def contributor_stats(
+        self, owner: str, repo: str, since: datetime | None = None
+    ) -> list[dict[str, Any]] | None:
         """Aggregate per-contributor weekly stats via GraphQL commit history.
 
         Walks every branch and dedupes by commit OID so feature-branch work counts
-        even before it's merged, without double-counting after merge. History is
-        limited to the last ``sync_history_days`` to keep GraphQL calls bounded.
+        even before it's merged, without double-counting after merge.
+
+        ``since`` bounds the history walk: pass ``None`` for a full backfill (every
+        commit since the repo was created), or a datetime for an incremental top-up.
 
         Returns the same shape the old REST /stats/contributors endpoint did:
             [{"author": {id, login, avatar_url, html_url}, "weeks": [{"w": ts, "a", "d", "c", "f"}]}]
@@ -187,17 +219,16 @@ class GitHubClient:
         if not branches:
             return None
 
-        since_dt = datetime.now(UTC) - timedelta(days=settings.sync_history_days)
-        since_iso = since_dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+        since_iso = since.strftime("%Y-%m-%dT%H:%M:%SZ") if since else None
 
         # Drop branches whose tip is older than the window — they can't contribute
-        # any new commits.
+        # any new commits. On a full backfill every branch is in play.
         active: list[dict[str, Any]] = []
         for b in branches:
             tip_date = b.get("tip_date")
-            if tip_date:
+            if since and tip_date:
                 try:
-                    if datetime.fromisoformat(tip_date.replace("Z", "+00:00")) < since_dt:
+                    if datetime.fromisoformat(tip_date.replace("Z", "+00:00")) < since:
                         continue
                 except ValueError:
                     pass
@@ -282,9 +313,10 @@ class GitHubClient:
                 cursor = history["pageInfo"]["endCursor"]
 
         logger.info(
-            "graphql: %s/%s aggregated %d contributors from %d/%d branches across %d pages "
+            "graphql: %s/%s (%s) aggregated %d contributors from %d/%d branches across %d pages "
             "(%d unique commits, skipped %d stale, %d merged)",
-            owner, repo, len(acc), len(active) - skipped_merged, len(branches),
+            owner, repo, f"since {since_iso}" if since_iso else "full history",
+            len(acc), len(active) - skipped_merged, len(branches),
             page_count, len(seen_oids), skipped_stale, skipped_merged,
         )
 

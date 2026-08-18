@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block content %}
-<h2>Repos</h2>
+<div class="dashboard-header">
+    <h2>Repos</h2>
+    <form method="post" action="/sync/repos" class="inline-form">
+        <input type="hidden" name="next" value="/repos">
+        <button type="submit" title="Stiahne len zoznam repozitárov orgu, bez commit histórie" {% if syncing %}disabled{% endif %}>
+            ⤓ Načítať zoznam repozitárov
+        </button>
+    </form>
+</div>
 
 <form method="get" action="/repos" class="repo-search-form" role="search">
     <input type="search" name="q" value="{{ q }}" placeholder="🔍 Hľadať repo (owner/name)…" autocomplete="off">
@@ -15,7 +23,11 @@
     {% if q %}
         <p class="empty">Žiadne repá nezodpovedajú <code>{{ q }}</code>.</p>
     {% else %}
-        <p class="empty">Žiadne repá zatiaľ. Spusti full sync, alebo zadaj <code>owner/repo</code> vyššie.</p>
+        <p class="empty">
+            Žiadne repá zatiaľ. Klikni na <strong>⤓ Načítať zoznam repozitárov</strong> —
+            stiahne len zoznam z orgu (pár sekúnd), a potom si vieš každé repo
+            odsyncovať zvlášť tlačidlom <strong>↻ Sync</strong>.
+        </p>
     {% endif %}
 {% else %}
 <table class="leaderboard">
@@ -23,6 +35,7 @@
         <tr>
             <th>Repo</th>
             <th class="num">Branche</th>
+            <th>História od</th>
             <th>Last synced</th>
             <th></th>
         </tr>
@@ -32,14 +45,23 @@
         <tr>
             <td>{{ r.full_name }}{% if r.archived %} <span class="muted">(archived)</span>{% endif %}{% if r.fork %} <span class="muted">(fork)</span>{% endif %}</td>
             <td class="num">{{ "{:,}".format(r.branch_count) }}</td>
+            <td>{% if r.history_synced_from %}{{ r.history_synced_from }}{% else %}<span class="muted">nebackfillnuté</span>{% endif %}</td>
             <td>{% if r.last_synced_at %}{{ r.last_synced_at.strftime('%Y-%m-%d %H:%M UTC') }}{% else %}—{% endif %}</td>
-            <td>
+            <td class="row-actions">
                 <form method="post" action="/sync/repo" class="inline-form">
                     <input type="hidden" name="full_name" value="{{ r.full_name }}">
                     <input type="hidden" name="page" value="{{ page }}">
                     <input type="hidden" name="per_page" value="{{ per_page }}">
                     <input type="hidden" name="q" value="{{ q }}">
                     <button type="submit" {% if syncing %}disabled{% endif %}>↻ Sync</button>
+                </form>
+                <form method="post" action="/sync/repo" class="inline-form">
+                    <input type="hidden" name="full_name" value="{{ r.full_name }}">
+                    <input type="hidden" name="full" value="1">
+                    <input type="hidden" name="page" value="{{ page }}">
+                    <input type="hidden" name="per_page" value="{{ per_page }}">
+                    <input type="hidden" name="q" value="{{ q }}">
+                    <button type="submit" title="Znovu načítať celú históriu repa" {% if syncing %}disabled{% endif %}>⟲ Full</button>
                 </form>
             </td>
         </tr>

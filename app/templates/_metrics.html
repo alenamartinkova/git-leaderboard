@@ -1,0 +1,22 @@
+{#- Zdieľané makrá pre stránky s per-person štatistikami. -#}
+
+{% macro num(value) -%}{{ "{:,}".format(value|int) }}{%- endmacro %}
+
+{% macro dec(value) -%}{{ "{:,.1f}".format(value|float) }}{%- endmacro %}
+
+{#- Krátky zápis pre bunky mesačnej mriežky, nech stĺpce nie sú široké. -#}
+{% macro compact(value) -%}
+    {%- set v = value|float -%}
+    {%- if v == 0 -%}<span class="zero">·</span>
+    {%- elif v >= 100000 -%}{{ (v / 1000)|round(0)|int }}k
+    {%- elif v >= 1000 -%}{{ (v / 1000)|round(1) }}k
+    {%- else -%}{{ v|round(0)|int }}
+    {%- endif -%}
+{%- endmacro %}
+
+{#- Hodnota bunky podľa zvolenej metriky (pomer sa zobrazuje s desatinou). -#}
+{% macro metric_value(value, metric) -%}
+    {%- if metric == 'lines_per_commit' -%}
+        {%- if value|float == 0 -%}<span class="zero">·</span>{%- else -%}{{ dec(value) }}{%- endif -%}
+    {%- else -%}{{ compact(value) }}{%- endif -%}
+{%- endmacro %}

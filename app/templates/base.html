@@ -17,6 +17,7 @@
                 {% set path = request.url.path %}
                 <a href="/" class="{% if path == '/' %}active{% endif %}">Leaderboard</a>
                 <a href="/dashboard" class="{% if path.startswith('/dashboard') %}active{% endif %}">Dashboard</a>
+                <a href="/people" class="{% if path.startswith('/people') %}active{% endif %}">Ľudia</a>
                 <a href="/repos" class="{% if path.startswith('/repos') %}active{% endif %}">Repos</a>
             </nav>
         </div>
@@ -25,7 +26,7 @@
         {% block content %}{% endblock %}
     </main>
     <footer id="sync-footer" data-syncing="{{ '1' if syncing else '0' }}">
-        {% include "_sync_footer.html" %}
+        {% with next_url = request.url.path %}{% include "_sync_footer.html" %}{% endwith %}
     </footer>
     <script>
         (function () {

@@ -706,3 +706,179 @@ footer button:disabled {
     .repo-sync-form input[type="text"] { max-width: 100%; }
     footer { padding: 1rem; }
 }
+
+/* ---------- People / person pages ---------- */
+.page-sub {
+    margin: 0.35rem 0 0;
+    color: var(--muted);
+    font-size: 0.88rem;
+    max-width: 60ch;
+}
+
+.breadcrumb { margin: 0 0 1rem; font-size: 0.85rem; }
+.breadcrumb a { color: var(--muted); text-decoration: none; }
+.breadcrumb a:hover { color: var(--accent); }
+
+.nowrap { white-space: nowrap; }
+
+.ext-link {
+    color: var(--muted-2);
+    text-decoration: none;
+    font-size: 0.8rem;
+}
+.ext-link:hover { color: var(--accent); }
+
+.coverage-note {
+    margin: 0 0 1.25rem;
+    padding: 0.6rem 0.9rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: var(--radius-sm);
+    color: var(--muted);
+    font-size: 0.82rem;
+}
+.coverage-note.warn { border-left-color: var(--gold); }
+.coverage-note strong { color: var(--text); font-weight: 600; }
+
+
+
+.clear-btn,
+.repo-filter .clear-btn {
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.82rem;
+    padding: 0.4rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.clear-btn:hover,
+.repo-filter .clear-btn:hover { color: var(--text); background: var(--surface-2); border-color: var(--border-strong); }
+
+.th-sub {
+    display: block;
+    font-size: 0.62rem;
+    letter-spacing: 0.06em;
+    color: var(--muted-2);
+    font-weight: 600;
+    text-transform: none;
+}
+
+/* Bez podia — tieto tabuľky nie sú rebríček, sú to prehľady. */
+.no-podium tbody tr:nth-child(-n+3) { background: none; }
+.no-podium tbody tr:nth-child(-n+3):hover { background: var(--surface-hover); }
+.no-podium tbody tr:nth-child(1) .rank::before,
+.no-podium tbody tr:nth-child(2) .rank::before,
+.no-podium tbody tr:nth-child(3) .rank::before { content: none; }
+.no-podium tbody tr:nth-child(-n+3) .rank {
+    color: var(--muted);
+    font-size: 0.95rem;
+}
+.no-podium tbody tr:nth-child(-n+3) .who img { box-shadow: 0 0 0 1px var(--border-strong); }
+
+.person-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+.person-header h2 { margin: 0; }
+.person-avatar {
+    border-radius: 50%;
+    background: var(--border);
+    box-shadow: 0 0 0 2px var(--border-strong);
+}
+
+/* ---------- Sync actions ---------- */
+.sync-actions {
+    display: flex;
+    gap: 0.5rem;
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+footer button.ghost {
+    background: var(--surface-2);
+    color: var(--text);
+    border: 1px solid var(--border-strong);
+    box-shadow: none;
+}
+footer button.ghost:hover { background: var(--surface-hover); filter: none; box-shadow: 0 0 0 1px var(--accent); }
+
+.badge {
+    display: inline-block;
+    padding: 0.05rem 0.4rem;
+    border-radius: 999px;
+    background: rgba(163,113,247,0.18);
+    border: 1px solid rgba(163,113,247,0.4);
+    color: var(--accent-2);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+}
+
+.row-actions {
+    display: flex;
+    gap: 0.4rem;
+    white-space: nowrap;
+}
+
+/* ---------- Mesačná mriežka (ľudia × mesiace) ---------- */
+.grid-scroll,
+.table-scroll {
+    overflow-x: auto;
+    border-radius: var(--radius);
+    -webkit-overflow-scrolling: touch;
+}
+.table-scroll { max-height: 30rem; overflow-y: auto; }
+
+.monthly-grid {
+    border-collapse: separate;
+    border-spacing: 0;
+    font-variant-numeric: tabular-nums;
+    min-width: 100%;
+    /* .leaderboard má overflow:hidden — to by sticky stĺpec vyradilo. */
+    overflow: visible;
+    border-radius: 0;
+    box-shadow: none;
+}
+.monthly-grid th,
+.monthly-grid td {
+    padding: 0.45rem 0.6rem;
+    font-size: 0.8rem;
+    white-space: nowrap;
+}
+.monthly-grid th.month-col {
+    text-align: right;
+    font-size: 0.62rem;
+    line-height: 1.2;
+}
+.monthly-grid .sticky-col {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--surface);
+    border-right: 1px solid var(--border-strong);
+    font-weight: 600;
+    min-width: 9rem;
+}
+.monthly-grid thead .sticky-col { z-index: 3; background: #191f29; }
+.monthly-grid tbody tr:hover .sticky-col { background: var(--surface-hover); }
+.monthly-grid .sticky-col a { color: var(--text); text-decoration: none; }
+.monthly-grid .sticky-col a:hover { color: var(--accent); }
+
+.monthly-grid .total-col {
+    background: rgba(255,255,255,0.03);
+    font-weight: 700;
+    border-right: 1px solid var(--border);
+}
+.monthly-grid .cell { transition: outline-color 0.1s; }
+.monthly-grid .cell:hover { outline: 1px solid var(--accent); outline-offset: -1px; }
+.monthly-grid .zero { color: var(--muted-2); }
+
+/* Riadky mriežky nemajú hover gradient — prekryl by heatmapu. */
+.monthly-grid tbody tr:hover { background: none; }
+
+.export-links { display: flex; gap: 0.4rem; align-items: center; }

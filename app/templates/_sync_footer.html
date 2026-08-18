@@ -1,8 +1,19 @@
-<form method="post" action="/sync" class="sync-form">
-    <button type="submit" {% if syncing %}disabled{% endif %}>↻ Sync all</button>
-</form>
+{% set back = next_url | default('/') %}
+<div class="sync-actions">
+    <form method="post" action="/sync" class="sync-form">
+        <input type="hidden" name="next" value="{{ back }}">
+        <button type="submit" {% if syncing %}disabled{% endif %}>↻ Sync all</button>
+    </form>
+    <form method="post" action="/sync" class="sync-form"
+          onsubmit="return confirm('Full backfill znovu prejde celú históriu všetkých repozitárov od prvého commitu. Môže to trvať desiatky minút. Spustiť?');">
+        <input type="hidden" name="full" value="1">
+        <input type="hidden" name="next" value="{{ back }}">
+        <button type="submit" class="ghost" {% if syncing %}disabled{% endif %}>⟲ Full backfill</button>
+    </form>
+</div>
 {% if last_sync %}
     <p class="sync-info">last sync: {{ last_sync.started_at.strftime('%Y-%m-%d %H:%M UTC') }}
+       {% if last_sync.mode == 'full' %}<span class="badge">full</span>{% endif %}
        {% if last_sync.error %}<span class="err">(error: {{ last_sync.error }})</span>
        {% elif last_sync.finished_at %}— {{ last_sync.repos_synced }} repos
        {% else %}
