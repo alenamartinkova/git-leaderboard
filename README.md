@@ -26,6 +26,7 @@ Token potrebuje `repo` (čítanie privátnych repozitárov orgu) a `read:org`.
 | `/people` | **Každý človek × mesiac** ako mriežka (default), alebo súhrn za celú históriu |
 | `/people/{login}` | Detail človeka: mesačné grafy a tabuľka, rozpad po rokoch a repách |
 | `/people.csv` | Mesačné dáta v long formáte (`?by=total` dá súhrn) — priamo do kontingenčky |
+| `/api/people/monthly` | To isté ako JSON — na postavenie vlastného frontendu |
 | `/repos` | Zoznam repozitárov, dokedy má ktoré backfillnutú históriu, manuálny sync |
 
 ## Metriky
@@ -51,6 +52,42 @@ interpretácia je na tebe.
 
 Merge commity sa nezapočítavajú (ich diff duplikuje obsah vetvy) a commity,
 ktorých autor nie je nalinkovaný na GitHub účet, sa preskakujú.
+
+## API pre vlastný frontend
+
+`GET /api/people/monthly` vráti per človek / per mesiac: **commity, pridané a
+zmazané riadky (aj net), počet upravených repozitárov**, zmenené súbory, aktívne
+týždne a riadky/commit.
+
+```
+GET /api/people/monthly              # celá história
+GET /api/people/monthly?months=12    # posledných 12 mesiacov
+GET /api/people/monthly?login=jkovac # jeden človek
+```
+
+```jsonc
+{
+  "org": "...", "generated_at": "...",
+  "range": { "months": 12, "since": "2025-09-01" },
+  "coverage": { "first_week": "...", "repos_total": 12, "repos_backfilled": 12, "complete": true },
+  "months": ["2025-09", "..."],              // všetky mesiace v odpovedi
+  "people": [{
+    "login": "...", "avatar_url": "...", "html_url": "...",
+    "first_activity": "2019-02-03", "last_activity": "2026-08-09",
+    "totals_in_range": { "commits": 0, "additions": 0, "deletions": 0, "net_lines": 0, "...": 0 },
+    "months": [{ "month": "2025-09", "commits": 12, "additions": 3400, "deletions": 900,
+                 "net_lines": 2500, "changed_files": 88, "repos": 3,
+                 "active_weeks": 4, "lines_per_commit": 283.33 }]
+  }]
+}
+```
+
+`totals_in_range` je súčet za mesiace v odpovedi, nie za celú históriu — aby
+sedel s poľom `months` aj pri filtri. Mesiace bez aktivity sa nevypisujú;
+zoznam `months` na najvyššej úrovni je union naprieč všetkými ľuďmi.
+
+Ak frontend beží na inej doméne, povoľ ju v `API_CORS_ORIGINS` (comma-separated,
+prázdne = CORS vypnuté). API je len na čítanie, GET-only.
 
 ## Sync
 
