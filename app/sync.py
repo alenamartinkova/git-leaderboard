@@ -295,7 +295,7 @@ async def run_sync(full: bool = False, org: str | None = None) -> SyncRun:
             # ukázať zmysluplný progres (x/y) za celý beh, nie za každý org zvlášť.
             per_org: list[tuple[OrgConfig, list[dict]]] = []
             for cfg in org_configs:
-                async with GitHubClient(cfg.token) as gh:
+                async with GitHubClient(cfg.token, settings.sync_page_size) as gh:
                     repos = await gh.list_org_repos(cfg.name)
                 logger.info("found %d repos in %s", len(repos), cfg.name)
                 per_org.append((cfg, _org_targets(repos)))
@@ -304,25 +304,39 @@ async def run_sync(full: bool = False, org: str | None = None) -> SyncRun:
             db.commit()
 
             idx = 0
+            failed: list[str] = []
             for cfg, targets in per_org:
-                async with GitHubClient(cfg.token) as gh:
+                async with GitHubClient(cfg.token, settings.sync_page_size) as gh:
                     for repo_data in targets:
                         idx += 1
                         run.current_index = idx
                         run.current_repo = repo_data["full_name"]
                         db.commit()
 
-                        if not full and _can_skip_repo(db, repo_data):
-                            logger.info("skipping %s (no pushes since last sync)", repo_data["full_name"])
-                        elif await _sync_one(db, gh, repo_data, full=full):
-                            repos_synced += 1
+                        try:
+                            if not full and _can_skip_repo(db, repo_data):
+                                logger.info("skipping %s (no pushes since last sync)", repo_data["full_name"])
+                            elif await _sync_one(db, gh, repo_data, full=full):
+                                repos_synced += 1
+                        except Exception as exc:
+                            # Jedno rozbité repo nesmie zhodiť celý nočný beh —
+                            # zvyšok sa dosynchronizuje a chyby zhrnieme na konci.
+                            db.rollback()
+                            logger.exception("sync failed for %s", repo_data["full_name"])
+                            failed.append(f"{repo_data['full_name']}: {exc}")
                         run.repos_synced = repos_synced
                         db.commit()
 
             run.finished_at = datetime.now(UTC)
             run.current_repo = None
+            if failed:
+                summary = f"{len(failed)} repo(s) failed — " + "; ".join(failed)
+                run.error = summary[:2000]
             db.commit()
-            logger.info("sync finished: %d repos across %d org(s)", repos_synced, len(org_configs))
+            logger.info(
+                "sync finished: %d repos across %d org(s), %d failed",
+                repos_synced, len(org_configs), len(failed),
+            )
         except Exception as exc:
             logger.exception("sync failed")
             run.error = str(exc)[:2000]
@@ -352,7 +366,7 @@ async def run_sync_repo_list(org: str | None = None) -> SyncRun:
             org_configs = _resolve_orgs(org)
             total = 0
             for cfg in org_configs:
-                async with GitHubClient(cfg.token) as gh:
+                async with GitHubClient(cfg.token, settings.sync_page_size) as gh:
                     repos = await gh.list_org_repos(cfg.name)
                 targets = _org_targets(repos)
                 for repo_data in targets:
@@ -407,7 +421,7 @@ async def run_sync_repo(full_name: str, full: bool = False) -> SyncRun:
         db.refresh(run)
 
         try:
-            async with GitHubClient(token) as gh:
+            async with GitHubClient(token, settings.sync_page_size) as gh:
                 repo_data = await gh.get_repo(owner, name)
                 if await _sync_one(db, gh, repo_data, full=full):
                     run.repos_synced = 1

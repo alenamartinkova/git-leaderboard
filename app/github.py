@@ -9,6 +9,11 @@ logger = logging.getLogger(__name__)
 
 GITHUB_API = "https://api.github.com"
 
+# GitHub počíta additions/deletions pre každý commit v stránke. Pri repách s veľa
+# branchami to nestíha a vráti 502 — vtedy sa pýtame na menej commitov naraz.
+DEFAULT_HISTORY_PAGE = 100
+MIN_HISTORY_PAGE = 10
+
 _BRANCHES_QUERY = """
 query($owner: String!, $name: String!, $cursor: String) {
   repository(owner: $owner, name: $name) {
@@ -33,12 +38,12 @@ query($owner: String!, $name: String!, $cursor: String) {
 # Skips merge commits in code because their additions/deletions double-count branch
 # contents and the REST /stats endpoint we replaced ignored them too.
 _BRANCH_HISTORY_QUERY = """
-query($owner: String!, $name: String!, $branch: String!, $since: GitTimestamp, $cursor: String) {
+query($owner: String!, $name: String!, $branch: String!, $since: GitTimestamp, $cursor: String, $pageSize: Int!) {
   repository(owner: $owner, name: $name) {
     ref(qualifiedName: $branch) {
       target {
         ... on Commit {
-          history(first: 100, after: $cursor, since: $since) {
+          history(first: $pageSize, after: $cursor, since: $since) {
             pageInfo { hasNextPage endCursor }
             nodes {
               oid
@@ -74,7 +79,8 @@ def _week_start_ts(committed_at: datetime) -> int:
 
 
 class GitHubClient:
-    def __init__(self, token: str):
+    def __init__(self, token: str, history_page_size: int = DEFAULT_HISTORY_PAGE):
+        self._page_size = max(MIN_HISTORY_PAGE, min(100, history_page_size))
         self._client = httpx.AsyncClient(
             base_url=GITHUB_API,
             headers={
@@ -138,26 +144,47 @@ class GitHubClient:
             page += 1
         return branches
 
-    async def _graphql(self, query: str, variables: dict, attempts: int = 5) -> dict:
-        """POST a GraphQL query, backing off on rate limits.
+    async def _graphql(
+        self,
+        query: str,
+        variables: dict,
+        *,
+        rate_limit_attempts: int = 5,
+        server_error_attempts: int = 2,
+    ) -> dict:
+        """POST a GraphQL query.
 
-        A full backfill walks far more history than the old 365-day window, so
-        hitting the secondary rate limit is a normal event, not a failure.
+        Rate limits sa oplatí presedieť (full backfill ich trafí bežne), ale na
+        5xx nemá zmysel čakať dlho — tie znamenajú „query bola pridrahá" a rieši
+        ich až menšia stránka, o ktorú sa postará volajúci.
         """
+        rate_limited = 0
+        server_errors = 0
         delay = 5.0
-        for attempt in range(1, attempts + 1):
+
+        while True:
             r = await self._client.post("/graphql", json={"query": query, "variables": variables})
 
-            if r.status_code in (403, 429) or r.status_code >= 500:
-                if attempt == attempts:
+            if r.status_code in (403, 429):
+                rate_limited += 1
+                if rate_limited >= rate_limit_attempts:
                     r.raise_for_status()
                 wait = float(r.headers.get("Retry-After") or delay)
                 logger.warning(
-                    "github %s on graphql, retrying in %.0fs (attempt %d/%d)",
-                    r.status_code, wait, attempt, attempts,
+                    "github %s on graphql, retrying in %.0fs (%d/%d)",
+                    r.status_code, wait, rate_limited, rate_limit_attempts,
                 )
                 await asyncio.sleep(wait)
                 delay = min(delay * 2, 120.0)
+                continue
+
+            if r.status_code >= 500:
+                server_errors += 1
+                if server_errors >= server_error_attempts:
+                    r.raise_for_status()
+                logger.warning("github %s on graphql, retrying (%d/%d)",
+                               r.status_code, server_errors, server_error_attempts)
+                await asyncio.sleep(3.0)
                 continue
 
             r.raise_for_status()
@@ -165,7 +192,8 @@ class GitHubClient:
             errors = payload.get("errors")
             if errors:
                 types = {e.get("type") for e in errors}
-                if "RATE_LIMITED" in types and attempt < attempts:
+                if "RATE_LIMITED" in types and rate_limited + 1 < rate_limit_attempts:
+                    rate_limited += 1
                     logger.warning("graphql RATE_LIMITED, retrying in %.0fs", delay)
                     await asyncio.sleep(delay)
                     delay = min(delay * 2, 120.0)
@@ -173,7 +201,43 @@ class GitHubClient:
                 raise RuntimeError(f"GraphQL errors: {errors}")
             return payload["data"]
 
-        raise RuntimeError("graphql: retries exhausted")
+    async def _history_page(
+        self,
+        owner: str,
+        repo: str,
+        qualified: str,
+        since_iso: str | None,
+        cursor: str | None,
+        page_size: int,
+    ) -> tuple[dict, int]:
+        """Jedna stránka commit histórie; pri 502 sa stránka zmenšuje na polovicu.
+
+        Vracia aj použitú veľkosť, aby zvyšok repa pokračoval rovno tou menšou a
+        nenarážal do tej istej steny znovu.
+        """
+        size = page_size
+        while True:
+            try:
+                data = await self._graphql(
+                    _BRANCH_HISTORY_QUERY,
+                    {
+                        "owner": owner,
+                        "name": repo,
+                        "branch": qualified,
+                        "since": since_iso,
+                        "cursor": cursor,
+                        "pageSize": size,
+                    },
+                )
+                return data, size
+            except (httpx.HTTPStatusError, RuntimeError) as exc:
+                if size <= MIN_HISTORY_PAGE:
+                    raise
+                size = max(MIN_HISTORY_PAGE, size // 2)
+                logger.warning(
+                    "%s/%s %s: %s — skúšam menšiu stránku (pageSize=%d)",
+                    owner, repo, qualified, type(exc).__name__, size,
+                )
 
     async def _list_branches(self, owner: str, repo: str) -> tuple[list[dict[str, Any]], str | None]:
         """Returns ([{name, tip_oid, tip_date}], default branch name or None)."""
@@ -246,6 +310,7 @@ class GitHubClient:
         seen_oids: set[str] = set()
         page_count = 0
         skipped_merged = 0
+        page_size = self._page_size
 
         for b in active:
             branch = b["name"]
@@ -257,9 +322,8 @@ class GitHubClient:
             qualified = f"refs/heads/{branch}"
             cursor: str | None = None
             while True:
-                data = await self._graphql(
-                    _BRANCH_HISTORY_QUERY,
-                    {"owner": owner, "name": repo, "branch": qualified, "since": since_iso, "cursor": cursor},
+                data, page_size = await self._history_page(
+                    owner, repo, qualified, since_iso, cursor, page_size
                 )
                 ref = (data.get("repository") or {}).get("ref")
                 if not ref or not ref.get("target"):
@@ -314,10 +378,10 @@ class GitHubClient:
 
         logger.info(
             "graphql: %s/%s (%s) aggregated %d contributors from %d/%d branches across %d pages "
-            "(%d unique commits, skipped %d stale, %d merged)",
+            "of %d (%d unique commits, skipped %d stale, %d merged)",
             owner, repo, f"since {since_iso}" if since_iso else "full history",
             len(acc), len(active) - skipped_merged, len(branches),
-            page_count, len(seen_oids), skipped_stale, skipped_merged,
+            page_count, page_size, len(seen_oids), skipped_stale, skipped_merged,
         )
 
         if not acc:

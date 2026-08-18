@@ -49,6 +49,10 @@ class Settings(BaseSettings):
     # GraphQL rate limit.
     sync_history_days: int = 0
 
+    # Koľko commitov naraz pýtať z GraphQL. Pri 502 si to appka sama zníži,
+    # ale pri známe problémovom orgu sa dá začať nižšie.
+    sync_page_size: int = 100
+
     # Inkrementálny sync znovu prečíta posledných N dní a prepíše dotknuté týždne.
     # Pokrýva force-push / rebase / commity dopísané spätne.
     sync_overlap_days: int = 21

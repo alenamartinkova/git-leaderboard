@@ -163,6 +163,18 @@ Prvý full backfill veľkého orgu je najdrahšia operácia (chodí sa cez všet
 branche); GraphQL volania majú backoff na rate limit. Ak by to bolo priveľa,
 `SYNC_HISTORY_DAYS` sa dá nastaviť na strop v dňoch.
 
+### Keď GitHub vracia 502
+
+GitHub počíta `additions`/`deletions` pre každý commit v stránke. Pri repe s veľa
+branchami to nestihne a odpovie `502 Bad Gateway`. Appka si preto veľkosť stránky
+sama polovicuje (100 → 50 → 25 → 12 → 10) a pokračuje tou, ktorá prešla; keď
+neprejde ani 10, repo sa označí ako neúspešné. Štartovacia hodnota je
+`SYNC_PAGE_SIZE`.
+
+Padnuté repo nezhodí celý beh — zvyšok sa dosynchronizuje a v pätičke je zhrnutie
+typu `2 repo(s) failed — org/repo: …`. Repo bez kompletnej histórie je v `/repos`
+vidieť ako „nebackfillnuté" a skúsi sa znovu pri ďalšom syncu.
+
 ## Dev
 
 ```bash
