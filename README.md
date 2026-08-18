@@ -53,6 +53,31 @@ interpretácia je na tebe.
 Merge commity sa nezapočítavajú (ich diff duplikuje obsah vetvy) a commity,
 ktorých autor nie je nalinkovaný na GitHub účet, sa preskakujú.
 
+## Prihlásenie
+
+Appka vie HTTP Basic auth. Zapne sa vyplnením oboch premenných v `.env`:
+
+```
+AUTH_USER=milo
+AUTH_PASSWORD=nieco-dlhe-a-nahodne
+```
+
+Platí na všetko vrátane `/api/*` a `/static/*`; jediná výnimka je `/healthz`
+(kvôli healthchecku) a CORS preflight `OPTIONS`. Kým sú premenné prázdne, appka
+je otvorená komukoľvek, kto sa na ňu dostane — do logu to pri štarte píše
+varovanie.
+
+Basic auth posiela heslo v každom requeste (base64, nie šifrované), takže na
+servri to daj **za HTTPS** — reverse proxy s certifikátom, alebo len do VPN.
+
+Vlastný frontend sa autentifikuje rovnako:
+
+```js
+fetch("https://.../api/people/monthly", {
+  headers: { Authorization: "Basic " + btoa("milo:heslo") },
+})
+```
+
 ## API pre vlastný frontend
 
 `GET /api/people/monthly` vráti per človek / per mesiac: **commity, pridané a

@@ -20,6 +20,14 @@ class Settings(BaseSettings):
     # Pokrýva force-push / rebase / commity dopísané spätne.
     sync_overlap_days: int = 21
 
+    # Prihlásenie (HTTP Basic). Prázdne = appka je bez loginu.
+    auth_user: str = ""
+    auth_password: str = ""
+
+    @property
+    def auth_enabled(self) -> bool:
+        return bool(self.auth_user and self.auth_password)
+
     # Origins, ktoré smú volať /api/* z prehliadača (vlastný FE na inej doméne).
     # Prázdne = CORS vypnuté, API sa dá volať len zo servera / z tejto appky.
     api_cors_origins: str = ""

@@ -1,6 +1,8 @@
+import base64
 import csv
 import io
 import logging
+import secrets
 from contextlib import asynccontextmanager
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -58,6 +60,45 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="Git Leaderboard", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+# Cesty, ktoré musia ísť aj bez prihlásenia (healthcheck monitoringu / dockeru).
+_AUTH_EXEMPT = {"/healthz"}
+
+
+@app.middleware("http")
+async def basic_auth(request: Request, call_next):
+    """HTTP Basic login. Vypnutý, kým nie sú v .env vyplnené AUTH_USER aj AUTH_PASSWORD."""
+    if (
+        not settings.auth_enabled
+        or request.method == "OPTIONS"          # CORS preflight nenesie prihlasovacie údaje
+        or request.url.path in _AUTH_EXEMPT
+    ):
+        return await call_next(request)
+
+    header = request.headers.get("authorization", "")
+    if header.startswith("Basic "):
+        try:
+            user, _, password = base64.b64decode(header[6:]).decode("utf-8").partition(":")
+        except (ValueError, UnicodeDecodeError):
+            user = password = ""
+        # compare_digest na oboch poliach — konštantný čas, nech sa heslo nedá uhádnuť po znakoch
+        ok_user = secrets.compare_digest(user.encode(), settings.auth_user.encode())
+        ok_pass = secrets.compare_digest(password.encode(), settings.auth_password.encode())
+        if ok_user and ok_pass:
+            return await call_next(request)
+
+    return Response(
+        status_code=401,
+        headers={"WWW-Authenticate": 'Basic realm="Git Leaderboard"'},
+    )
+
+
+if settings.auth_enabled:
+    logger.info("HTTP Basic auth enabled for user %r", settings.auth_user)
+elif settings.auth_user or settings.auth_password:
+    logger.warning("AUTH_USER aj AUTH_PASSWORD musia byť vyplnené — login zostáva vypnutý")
+else:
+    logger.warning("no AUTH_USER/AUTH_PASSWORD set — app is open to anyone who can reach it")
 
 if settings.cors_origins:
     # Len na čítanie — /api/* je GET-only.
